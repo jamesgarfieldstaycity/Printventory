@@ -35,7 +35,7 @@
 </head>
 
 
-<body style="background-color: #1e1e2e;">
+<body class="filters-pane-pinned" style="background-color: #1e1e2e;">
   <div id="mobile-ui-overlay" hidden></div>
   <header id="mobile-app-bar" hidden aria-label="Printventory">
     <button type="button" id="mobile-menu-toggle" class="mobile-icon-btn" aria-label="Open filters" aria-controls="sidebar">☰</button>
@@ -55,7 +55,19 @@
     <button type="button" id="mobile-nav-folders" data-nav="folders"><span class="nav-glyph">▢</span>Folders</button>
     <button type="button" id="mobile-nav-more" data-nav="more"><span class="nav-glyph">⋯</span>Menu</button>
   </nav>
+  <!-- Sidebar hover trigger (invisible strip to reveal sidebar on hover) -->
+  <div id="sidebar-hover-trigger" class="sidebar-hover-trigger"></div>
   <div class="sidebar">
+    <div class="sidebar-header">
+      <span class="sidebar-title">Printventory</span>
+      <div class="sidebar-header-buttons">
+        <button type="button" class="sidebar-pin-btn" title="Pin sidebar" aria-label="Pin sidebar">
+          <span class="pin-icon-unpinned">📌</span>
+          <span class="pin-icon-pinned">📍</span>
+        </button>
+        <button type="button" class="sidebar-close-btn" title="Close sidebar" aria-label="Close sidebar">×</button>
+      </div>
+    </div>
     <div class="sidebar-chrome">
     <img src="logo.png" alt="Printventory Logo" id="logo">
     <div class="model-stats">
@@ -76,7 +88,10 @@
         <img src="roulette.png" alt="Print Roulette">
       </button>
     </div>
-    <button id="scan-directory-button">Scan Directory</button>
+    <div class="scan-buttons-row">
+      <button id="scan-directory-button">Scan Library</button>
+      <button type="button" id="library-folders-button" class="icon-button" title="Manage library folders">⚙</button>
+    </div>
     <button id="scan-stl-home-button" class="secondary-button" style="display: none;">Scan STL Home</button>
     <button id="view-library-button">View Entire Library</button>
     <div id="view-library-message" style="display: none; text-align: center; font-size: 14px; color: #000; margin-top: 5px; background-color: #FFD700; padding: 5px; border-radius: 4px; font-weight: bold;">
@@ -95,6 +110,7 @@
       <div class="performance-notice">Scanning may impact performance.</div>
     </div>
     </div>
+    <!-- Current filter display and boolean toolbar moved to here but query builder stays -->
     <div id="current-filter">
       <div id="current-filter-body"></div>
       <div id="search-boolean-toolbar" class="search-boolean-toolbar query-builder-control" hidden>
@@ -108,221 +124,15 @@
       </div>
       <button type="button" id="clear-all-filters-button" class="clear-filter-button" hidden>Clear All Filters</button>
     </div>
-    <div class="filter-section">
-      <div class="filter-pinned">
-      <div class="form-group search-models-field">
-        <label for="search-filter-input">Search Models:</label>
-        <div class="input-with-icon">
-          <input type="text" id="search-filter-input" placeholder="Enter search term...">
-          <button id="filter-search-button" class="icon-button" title="Add this text to the active query (all fields)">🔍</button>
-          <button id="clear-filter-search-button" class="icon-button" title="Clear search">×</button>
-        </div>
-        <label class="search-notes-toggle" title="Include notes in all-fields search. Turn off to skip long imported descriptions. A search limited to the Notes field still matches notes.">
-          <input type="checkbox" id="search-include-notes" checked>
-          <span>Include Notes</span>
-        </label>
-      </div>
-      <div class="form-group">
-        <label for="sort-select">Sort By:</label>
-        <select id="sort-select">
-          <option value="name-asc">Name (A-Z)</option>
-          <option value="name-desc">Name (Z-A)</option>
-          <option value="size-asc">Size (Smallest First)</option>
-          <option value="size-desc">Size (Largest First)</option>
-          <option value="date-asc">Modified (Oldest First)</option>
-          <option value="date-desc" selected>Modified (Newest First)</option>
-          <option value="dateadded-asc">Date Added (Oldest First)</option>
-          <option value="dateadded-desc">Date Added (Newest First)</option>
-          <option value="directory-asc">Parent Directory (A-Z)</option>
-          <option value="directory-desc">Parent Directory (Z-A)</option>
-          <option value="designer-asc">Designer (A-Z)</option>
-          <option value="designer-desc">Designer (Z-A)</option>
-          <option value="parentmodel-asc">Parent Model (A-Z)</option>
-          <option value="parentmodel-desc">Parent Model (Z-A)</option>
-          <option value="printed-asc">Printed (Not Printed First)</option>
-          <option value="printed-desc">Printed (Printed First)</option>
-          <option value="printstatus-asc">Print Status (Printing First)</option>
-          <option value="printstatus-desc">Print Status (Unprinted First)</option>
-          <option value="printcount-desc">Print Count (Most First)</option>
-          <option value="printcount-asc">Print Count (Least First)</option>
-          <option value="lastprinted-desc">Last Printed (Newest First)</option>
-          <option value="lastprinted-asc">Last Printed (Oldest First)</option>
-          <option value="rating-desc">Rating (Highest First)</option>
-          <option value="rating-asc">Rating (Lowest First)</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="folder-select">Folders:</label>
-        <div class="dropdown-with-list">
-          <select id="folder-select">
-            <option value="">All folders</option>
-          </select>
-          <button type="button" id="folder-tree-button" class="list-button icon-button folder-tree-button" title="Browse folder tree">☰</button>
-        </div>
-      </div>
-      </div>
-      <button type="button" id="filter-stack-toggle" class="filter-stack-toggle" aria-expanded="false" aria-controls="filter-stack">
-        <span class="filter-stack-toggle-label">More filters</span>
-        <span class="filter-stack-toggle-chevron" aria-hidden="true">▸</span>
-      </button>
-      <div id="filter-stack" class="filter-stack">
-      <div class="form-group">
-        <label for="designer-select">Select Designer:</label>
-        <div class="dropdown-with-list">
-          <select id="designer-select">
-            <option value="">All Designers</option>
-          </select>
-          <button type="button" class="list-button icon-button" data-field="designer" data-target="designer-select" title="Search existing designers">☰</button>
-        </div>
-        <div id="designer-filter-chips" class="filter-multi-chips" hidden></div>
-        <div id="designer-combine-row" class="filter-combine-row query-builder-control" hidden>
-          <span class="filter-combine-label">Match:</span>
-          <label><input type="radio" name="designer-combine" value="OR" checked> Any</label>
-          <label><input type="radio" name="designer-combine" value="AND"> All</label>
-        </div>
-      </div>
 
-      <div class="form-group">
-        <label for="parent-select">Select Parent Model:</label>
-        <div class="dropdown-with-list">
-          <select id="parent-select">
-            <option value="">All Parent Models</option>
-          </select>
-          <button type="button" class="list-button icon-button" data-field="parent" data-target="parent-select" title="Search existing parent models">☰</button>
-        </div>
-        <div id="parentModel-filter-chips" class="filter-multi-chips" hidden></div>
-        <div id="parentModel-combine-row" class="filter-combine-row query-builder-control" hidden>
-          <span class="filter-combine-label">Match:</span>
-          <label><input type="radio" name="parentModel-combine" value="OR" checked> Any</label>
-          <label><input type="radio" name="parentModel-combine" value="AND"> All</label>
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="license-select">Select License:</label>
-        <div class="dropdown-with-list">
-          <select id="license-select">
-            <option value="">All Licenses</option>
-          </select>
-          <button type="button" class="list-button icon-button" data-field="license" data-target="license-select" title="Search existing licenses">☰</button>
-        </div>
-        <div id="license-filter-chips" class="filter-multi-chips" hidden></div>
-        <div id="license-combine-row" class="filter-combine-row query-builder-control" hidden>
-          <span class="filter-combine-label">Match:</span>
-          <label><input type="radio" name="license-combine" value="OR" checked> Any</label>
-          <label><input type="radio" name="license-combine" value="AND"> All</label>
-        </div>
-      </div>
-      <div class="form-group">
-        <label for="printed-select">Print Status:</label>
-        <select id="printed-select">
-          <option value="all">All Models</option>
-          <option value="unprinted">Unprinted</option>
-          <option value="want">Want</option>
-          <option value="queued">Queued</option>
-          <option value="printing">Printing</option>
-          <option value="printed">Printed</option>
-          <option value="failed">Failed</option>
-          <option value="ever-printed">Ever printed</option>
-          <option value="never-printed">Never printed</option>
-          <option value="not-printed">Not printed</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="new-select">New Status:</label>
-        <select id="new-select">
-          <option value="all">All Models</option>
-          <option value="new">New Models Only</option>
-          <option value="not-new">Exclude New Models</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="favorite-select">Favorite:</label>
-        <select id="favorite-select">
-          <option value="all">All Models</option>
-          <option value="favorited">Favorites</option>
-          <option value="not-favorited">Not Favorites</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="rating-select">Rating:</label>
-        <select id="rating-select">
-          <option value="all">All Ratings</option>
-          <option value="unrated">Unrated</option>
-          <option value="1">1 Star</option>
-          <option value="2">2 Stars</option>
-          <option value="3">3 Stars</option>
-          <option value="4">4 Stars</option>
-          <option value="5">5 Stars</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="rating-min-select">Min Rating:</label>
-        <select id="rating-min-select">
-          <option value="all">All</option>
-          <option value="1">At Least 1</option>
-          <option value="2">At Least 2</option>
-          <option value="3">At Least 3</option>
-          <option value="4">At Least 4</option>
-          <option value="5">At Least 5</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="filetype-select">File Type:</label>
-        <select id="filetype-select">
-          <option value="">All Types</option>
-          <option value="stl">STL</option>
-          <option value="3mf">3MF</option>
-          <!-- Zip and additional types are added by populateFileTypeFilter() from settings -->
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="tag-filter">Filter by Tag:</label>
-        <div class="dropdown-with-list">
-          <div class="tags-input-container">
-            <select id="tag-filter">
-              <option value="">All Tags</option>
-            </select>
-          </div>
-          <button type="button" class="list-button icon-button" data-field="tag" data-target="tag-filter" title="Search existing tags">☰</button>
-        </div>
-        <div id="tags-filter-chips" class="filter-multi-chips" hidden></div>
-        <div id="tags-combine-row" class="filter-combine-row query-builder-control" hidden>
-          <span class="filter-combine-label">Match:</span>
-          <label><input type="radio" name="tags-combine" value="OR"> Any tag</label>
-          <label><input type="radio" name="tags-combine" value="AND" checked> All tags</label>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label for="filament-filter">Filter by Filament:</label>
-        <div class="dropdown-with-list">
-          <div class="tags-input-container">
-            <select id="filament-filter">
-              <option value="">All Filaments</option>
-            </select>
-          </div>
-          <button type="button" class="list-button icon-button" data-field="filament" data-target="filament-filter" title="Search existing filaments">☰</button>
-        </div>
-        <div id="filaments-filter-chips" class="filter-multi-chips" hidden></div>
-        <div id="filaments-combine-row" class="filter-combine-row query-builder-control" hidden>
-          <span class="filter-combine-label">Match:</span>
-          <label><input type="radio" name="filaments-combine" value="OR"> Any filament</label>
-          <label><input type="radio" name="filaments-combine" value="AND" checked> All filaments</label>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <button type="button" id="invert-filter-button" title="Invert the current filter (NOT equal instead of equal)">Invert Filters</button>
-      </div>
-
-      <div class="form-group">
-        <button id="edit-mode-toggle">Multi-Edit Mode</button>
-      </div>
-      </div>
-    </div>
+    <!-- Filter controls have moved to the Filters Pane -->
 
     <div id="model-details" class="model-details hidden">
       <h3>Model Details <span class="mobile-details-actions"><button type="button" class="mobile-details-preview-btn" id="mobile-details-open-preview">3D</button><button type="button" class="mobile-panel-close" data-mobile-close-details aria-label="Close details">×</button></span></h3>
+      <div class="form-group shopify-listing-group shopify-listing-top">
+        <button type="button" id="manage-shopify-listing-button" class="shopify-listing-button" onclick="if(typeof window.openShopifyProductEditor==='function')window.openShopifyProductEditor()">Manage Shopify Listing</button>
+        <p id="shopify-listing-status" class="setting-description"></p>
+      </div>
       <div class="form-group print-lifecycle-group">
         <label for="model-print-status">Print status</label>
         <div class="print-lifecycle-controls">
@@ -547,6 +357,26 @@
         <div class="dialog-buttons">
           <button type="submit" id="add-parent-button">Add</button>
           <button type="button" id="cancel-parent-button" onclick="document.getElementById('new-parent-dialog')?.close()">Cancel</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="set-parent-model-dialog" class="modal">
+      <form method="dialog">
+        <h3>Set Parent Model</h3>
+        <p id="set-parent-model-info" style="margin: 0 0 12px 0; font-size: 13px; color: var(--text-secondary, #999);"></p>
+        <div class="form-group">
+          <label for="set-parent-model-select">Parent Model Name:</label>
+          <select id="set-parent-model-select">
+            <option value="">None (Clear Parent)</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-top: 8px;">
+          <label for="set-parent-model-input">Or enter new:</label>
+          <input type="text" id="set-parent-model-input" placeholder="Type new parent model name" autocomplete="off">
+        </div>
+        <div class="dialog-buttons">
+          <button type="submit" id="set-parent-model-confirm">Apply</button>
+          <button type="button" id="set-parent-model-cancel" onclick="document.getElementById('set-parent-model-dialog')?.close()">Cancel</button>
         </div>
       </form>
     </dialog>
@@ -1098,6 +928,23 @@
         </div>
       </form>
     </dialog>
+    <dialog id="library-folders-dialog" class="modal">
+      <form method="dialog">
+        <h3>Library Folders</h3>
+        <p class="setting-description">Add multiple folders to scan. Folders with Auto-scan enabled will be scanned when Printventory starts.</p>
+        <div class="settings-group">
+          <div id="library-folders-list" class="library-folders-list">
+            <!-- Populated dynamically -->
+          </div>
+          <div class="dialog-buttons" style="margin-top: 12px; justify-content: flex-start;">
+            <button type="button" id="add-library-folder-button">Add Folder</button>
+          </div>
+        </div>
+        <div class="dialog-buttons">
+          <button type="button" id="close-library-folders" onclick="document.getElementById('library-folders-dialog')?.close()">Close</button>
+        </div>
+      </form>
+    </dialog>
     <dialog id="mcp-server-settings-dialog" class="modal">
       <form method="dialog">
         <h3>MCP Server</h3>
@@ -1224,6 +1071,451 @@
         </div>
       </form>
     </dialog>
+
+    <dialog id="shopify-settings-dialog" class="modal shopify-dialog">
+      <form method="dialog">
+        <h3>Shopify Integration</h3>
+
+        <!-- Connection status banner -->
+        <div id="shopify-status-banner" class="shopify-status-banner not-configured">
+          <span id="shopify-status-text">Not configured</span>
+        </div>
+
+        <!-- Main actions (visible when configured) -->
+        <div id="shopify-main-actions" class="shopify-main-actions">
+          <button type="button" class="shopify-action-btn" id="shopify-reconcile-btn" onclick="if(typeof window.openShopifyReconciliationDialog==='function')window.openShopifyReconciliationDialog()">
+            <span class="action-icon">🔗</span>
+            <span class="action-label">Reconcile Products</span>
+            <span class="action-count" id="shopify-unlinked-count"></span>
+          </button>
+          <button type="button" class="shopify-action-btn" id="shopify-refresh-btn" onclick="if(typeof window.refreshShopifyLinkedCount==='function')window.refreshShopifyLinkedCount()">
+            <span class="action-icon">🔄</span>
+            <span class="action-label">Refresh Listings</span>
+            <span class="action-count" id="shopify-linked-count"></span>
+          </button>
+          <button type="button" class="shopify-action-btn" id="shopify-types-btn" onclick="if(typeof window.openShopifyProductTypesDialog==='function')window.openShopifyProductTypesDialog()">
+            <span class="action-icon">📦</span>
+            <span class="action-label">Manage Product Types</span>
+          </button>
+        </div>
+
+        <!-- Configuration section (collapsible) -->
+        <details id="shopify-config-details" class="shopify-config-section">
+          <summary class="shopify-config-toggle">
+            <span>⚙️ Configure Connection</span>
+          </summary>
+          <div class="shopify-config-content">
+            <div class="form-group">
+              <label for="shopify-store-domain">Store Domain</label>
+              <input type="text" id="shopify-store-domain" placeholder="your-store.myshopify.com" autocomplete="off" spellcheck="false">
+              <p class="setting-description">e.g., <code>my-store.myshopify.com</code> (no https://)</p>
+            </div>
+            <div class="form-group">
+              <label for="shopify-client-id">Client ID</label>
+              <input type="text" id="shopify-client-id" placeholder="Your app's Client ID" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="form-group">
+              <label for="shopify-client-secret">Client Secret</label>
+              <input type="password" id="shopify-client-secret" placeholder="Your app's Client Secret" autocomplete="off">
+            </div>
+            <div class="form-group">
+              <label for="shopify-api-version">API Version</label>
+              <select id="shopify-api-version">
+                <option value="2024-10" selected>2024-10 (stable)</option>
+                <option value="2024-07">2024-07</option>
+                <option value="2024-04">2024-04</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <button type="button" id="shopify-test-connection" class="shopify-test-btn" onclick="if(typeof window.testShopifyConnectionFromDialog==='function')window.testShopifyConnectionFromDialog()">Test Connection</button>
+              <p id="shopify-connection-status" class="setting-description"></p>
+            </div>
+          </div>
+        </details>
+
+        <div class="dialog-buttons">
+          <button type="button" id="cancel-shopify-settings" onclick="document.getElementById('shopify-settings-dialog')?.close()">Close</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="shopify-product-types-dialog" class="modal">
+      <form method="dialog">
+        <h3>Shopify Product Types</h3>
+        <p class="setting-description">Manage product type codes used in SKU generation (e.g., FIG = Figure, ORN = Ornament). Codes must be unique and are used in the SKU pattern: <code>GR-[Collection]-[Type]-[Product]-[Series]-[Variant]</code></p>
+
+        <div class="settings-group">
+          <div class="form-group shopify-type-add-section">
+            <div class="shopify-type-add-row">
+              <div class="shopify-type-field">
+                <label for="shopify-type-code">Code</label>
+                <input type="text" id="shopify-type-code" placeholder="FIG" maxlength="5" style="text-transform: uppercase;">
+              </div>
+              <div class="shopify-type-field shopify-type-field-wide">
+                <label for="shopify-type-name">Name</label>
+                <input type="text" id="shopify-type-name" placeholder="Figure">
+              </div>
+              <button type="button" id="add-shopify-type-btn" onclick="if(typeof window.addShopifyProductType==='function')window.addShopifyProductType()">Add</button>
+            </div>
+            <p id="shopify-type-status" class="setting-description"></p>
+          </div>
+
+          <div class="form-group">
+            <label>Existing Types</label>
+            <div id="shopify-types-list" class="shopify-types-list">
+              <!-- Populated dynamically -->
+            </div>
+          </div>
+        </div>
+
+        <div class="dialog-buttons">
+          <button type="button" id="close-shopify-types" onclick="document.getElementById('shopify-product-types-dialog')?.close()">Close</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="shopify-product-editor-dialog" class="modal shopify-product-editor shopify-editor-large">
+      <form method="dialog" id="shopify-product-form">
+        <!-- Header with status and actions -->
+        <div class="shopify-editor-toolbar">
+          <div class="shopify-editor-title">
+            <span id="shopify-model-path" class="shopify-model-path" title=""></span>
+            <div class="shopify-editor-badges">
+              <span id="shopify-editor-push-status" class="shopify-push-badge">Not pushed</span>
+              <span id="shopify-editor-shopify-status" class="shopify-push-badge shopify-status-hidden"></span>
+            </div>
+          </div>
+          <div class="shopify-editor-actions">
+            <button type="button" id="shopify-open-slicer" class="shopify-action-btn" onclick="if(typeof window.openModelInSlicer==='function')window.openModelInSlicer()">Open Model</button>
+            <button type="button" id="shopify-refresh-live" class="shopify-action-btn shopify-refresh-btn" style="display: none;" onclick="if(typeof window.refreshLiveShopifyData==='function')window.refreshLiveShopifyData()">🔄 Refresh from Shopify</button>
+            <button type="button" id="shopify-push-update" class="shopify-push-btn" style="display: none;" onclick="if(typeof window.pushLinkedShopifyUpdate==='function')window.pushLinkedShopifyUpdate()">Push to Shopify</button>
+            <button type="button" id="shopify-push-draft" class="shopify-push-btn" onclick="if(typeof window.pushShopifyProductAsDraft==='function')window.pushShopifyProductAsDraft()">Push as Draft</button>
+            <button type="button" id="shopify-save-local" class="shopify-action-btn" onclick="if(typeof window.saveShopifyProductLocally==='function')window.saveShopifyProductLocally()">Save</button>
+            <button type="button" id="shopify-cancel" class="shopify-action-btn shopify-cancel-btn" onclick="document.getElementById('shopify-product-editor-dialog')?.close()">Close</button>
+          </div>
+        </div>
+
+        <!-- Model Link Status Section -->
+        <div id="shopify-link-section" class="shopify-link-section">
+          <div class="shopify-link-info">
+            <span class="shopify-link-label">Shopify Link:</span>
+            <span id="shopify-link-status-text" class="shopify-link-status-text">Not linked</span>
+            <span id="shopify-link-product-info" class="shopify-link-product-info"></span>
+          </div>
+          <div class="shopify-link-actions">
+            <button type="button" id="shopify-unlink-btn" class="shopify-action-btn shopify-danger-btn" style="display: none;">Unlink</button>
+            <button type="button" id="shopify-link-existing-btn" class="shopify-action-btn" style="display: none;">Link to existing...</button>
+          </div>
+        </div>
+
+        <div class="shopify-editor-content">
+          <!-- Linked Product Section - Shown when product is linked to Shopify -->
+          <div id="shopify-linked-section" class="shopify-linked-section" style="display: none;">
+            <div class="shopify-form-row">
+              <div class="shopify-form-field shopify-field-wide">
+                <label for="shopify-live-title">Title</label>
+                <input type="text" id="shopify-live-title" placeholder="Product title">
+              </div>
+              <div class="shopify-form-field">
+                <label for="shopify-live-vendor">Vendor</label>
+                <input type="text" id="shopify-live-vendor" placeholder="e.g., Disney">
+              </div>
+            </div>
+
+            <div class="shopify-form-field shopify-description-field">
+              <div class="shopify-description-header">
+                <label>Description</label>
+                <div class="shopify-description-toggle">
+                  <button type="button" class="desc-toggle-btn active" data-mode="editor" data-target="live">Editor</button>
+                  <button type="button" class="desc-toggle-btn" data-mode="html" data-target="live">HTML</button>
+                </div>
+              </div>
+              <!-- Formatting Toolbar -->
+              <div id="shopify-live-description-toolbar" class="shopify-desc-toolbar">
+                <button type="button" data-command="bold" title="Bold (Ctrl+B)"><b>B</b></button>
+                <button type="button" data-command="italic" title="Italic (Ctrl+I)"><i>I</i></button>
+                <span class="toolbar-separator"></span>
+                <button type="button" data-command="formatBlock" data-value="h2" title="Heading 2">H2</button>
+                <button type="button" data-command="formatBlock" data-value="h3" title="Heading 3">H3</button>
+                <button type="button" data-command="formatBlock" data-value="p" title="Paragraph">P</button>
+                <span class="toolbar-separator"></span>
+                <button type="button" data-command="insertUnorderedList" title="Bullet List">•</button>
+                <button type="button" data-command="insertOrderedList" title="Numbered List">1.</button>
+              </div>
+              <!-- Contenteditable Editor -->
+              <div id="shopify-live-description-editor" class="shopify-description-editor" contenteditable="true" data-placeholder="Enter product description..." data-target="live"></div>
+              <!-- HTML Source View (hidden by default) -->
+              <textarea id="shopify-live-description" class="shopify-description-code" style="display: none;" rows="6" placeholder="Product description (HTML)"></textarea>
+            </div>
+
+            <div class="shopify-form-field">
+              <label for="shopify-live-tags">Tags <span class="field-hint">(comma-separated)</span></label>
+              <input type="text" id="shopify-live-tags" placeholder="e.g., Disney, Figure, Collectible">
+            </div>
+
+            <!-- SEO Section -->
+            <details class="shopify-seo-section" open>
+              <summary>SEO</summary>
+              <div class="shopify-seo-content">
+                <div class="shopify-form-field">
+                  <label for="shopify-live-seo-title">SEO Title <span class="field-hint char-count" id="seo-title-count">0/70</span></label>
+                  <input type="text" id="shopify-live-seo-title" placeholder="Page title for search engines" maxlength="70">
+                </div>
+                <div class="shopify-form-field">
+                  <label for="shopify-live-seo-description">SEO Description <span class="field-hint char-count" id="seo-desc-count">0/160</span></label>
+                  <textarea id="shopify-live-seo-description" rows="2" placeholder="Meta description for search engines" maxlength="160"></textarea>
+                </div>
+              </div>
+            </details>
+
+            <!-- Variants Table -->
+            <div class="shopify-form-field">
+              <label>Variants <span class="field-hint" id="shopify-variant-count"></span></label>
+              <div id="shopify-variants-table" class="shopify-variants-table">
+                <!-- Populated dynamically -->
+              </div>
+            </div>
+          </div>
+
+          <!-- SKU Section - Only shown for NEW (unlinked) products -->
+          <div id="shopify-sku-section" class="shopify-sku-section-compact">
+            <div class="shopify-sku-row">
+              <div class="shopify-sku-field">
+                <label for="shopify-collection-code">Collection</label>
+                <select id="shopify-collection-code"><option value="">Select...</option></select>
+              </div>
+              <div class="shopify-sku-field">
+                <label for="shopify-type-code-select">Type</label>
+                <select id="shopify-type-code-select"><option value="">Select...</option></select>
+              </div>
+              <div class="shopify-sku-field">
+                <label for="shopify-product-code">Product</label>
+                <input type="text" id="shopify-product-code" placeholder="MICKEY" maxlength="6" style="text-transform: uppercase;">
+              </div>
+              <div class="shopify-sku-field shopify-sku-field-small">
+                <label for="shopify-series-number">Series</label>
+                <input type="number" id="shopify-series-number" min="1" readonly>
+              </div>
+              <div class="shopify-sku-field shopify-sku-field-small">
+                <label for="shopify-variant-number">Var</label>
+                <input type="number" id="shopify-variant-number" min="1" value="1">
+              </div>
+              <div class="shopify-sku-preview-inline">
+                <label>SKU</label>
+                <code id="shopify-sku-preview">GR-???-???-??????-000-00</code>
+              </div>
+            </div>
+            <!-- Add new collection form - separate row below -->
+            <div id="shopify-new-collection-form" class="shopify-inline-add-row" style="display: none;">
+              <span class="add-row-label">New Collection:</span>
+              <input type="text" id="shopify-new-collection-code" placeholder="Code (e.g. DIS)" maxlength="4" style="text-transform: uppercase;">
+              <input type="text" id="shopify-new-collection-name" placeholder="Name (e.g. Disney)">
+              <button type="button" onclick="window.saveNewCollection()">✓</button>
+              <button type="button" onclick="window.cancelNewCollection()">✕</button>
+            </div>
+            <!-- Add new type form - separate row below -->
+            <div id="shopify-new-type-form" class="shopify-inline-add-row" style="display: none;">
+              <span class="add-row-label">New Type:</span>
+              <input type="text" id="shopify-new-type-code" placeholder="Code (e.g. FIG)" maxlength="4" style="text-transform: uppercase;">
+              <input type="text" id="shopify-new-type-name" placeholder="Name (e.g. Figure)">
+              <button type="button" onclick="window.saveNewType()">✓</button>
+              <button type="button" onclick="window.cancelNewType()">✕</button>
+            </div>
+          </div>
+
+          <!-- Product Content - Only shown for NEW products -->
+          <div id="shopify-new-product-fields" class="shopify-new-fields-compact">
+            <div class="shopify-form-row">
+              <div class="shopify-form-field shopify-field-wide">
+                <label for="shopify-product-title">Title</label>
+                <input type="text" id="shopify-product-title" placeholder="Enter product title" required>
+              </div>
+              <div class="shopify-form-field shopify-field-narrow">
+                <label for="shopify-product-price">Price</label>
+                <input type="number" id="shopify-product-price" step="0.01" min="0" placeholder="0.00">
+              </div>
+              <div class="shopify-form-field">
+                <label for="shopify-licensor">Licensor</label>
+                <input type="text" id="shopify-licensor" placeholder="e.g., Disney">
+              </div>
+            </div>
+
+            <div class="shopify-form-field shopify-description-field">
+              <div class="shopify-description-header">
+                <label>Description</label>
+                <div class="shopify-description-toggle">
+                  <button type="button" class="desc-toggle-btn active" data-mode="editor" data-target="new">Editor</button>
+                  <button type="button" class="desc-toggle-btn" data-mode="html" data-target="new">HTML</button>
+                </div>
+              </div>
+              <!-- Formatting Toolbar -->
+              <div id="shopify-product-description-toolbar" class="shopify-desc-toolbar">
+                <button type="button" data-command="bold" title="Bold (Ctrl+B)"><b>B</b></button>
+                <button type="button" data-command="italic" title="Italic (Ctrl+I)"><i>I</i></button>
+                <span class="toolbar-separator"></span>
+                <button type="button" data-command="formatBlock" data-value="h2" title="Heading 2">H2</button>
+                <button type="button" data-command="formatBlock" data-value="h3" title="Heading 3">H3</button>
+                <button type="button" data-command="formatBlock" data-value="p" title="Paragraph">P</button>
+                <span class="toolbar-separator"></span>
+                <button type="button" data-command="insertUnorderedList" title="Bullet List">•</button>
+                <button type="button" data-command="insertOrderedList" title="Numbered List">1.</button>
+              </div>
+              <!-- Contenteditable Editor -->
+              <div id="shopify-product-description-editor" class="shopify-description-editor" contenteditable="true" data-placeholder="Enter product description..." data-target="new"></div>
+              <!-- HTML Source View (hidden by default) -->
+              <textarea id="shopify-product-description" class="shopify-description-code" style="display: none;" rows="6" placeholder="Product description (HTML)"></textarea>
+            </div>
+
+            <div class="shopify-form-field">
+              <label for="shopify-product-tags">Tags <span class="field-hint">(comma-separated)</span></label>
+              <input type="text" id="shopify-product-tags" placeholder="e.g., Disney, Figure, Collectible">
+            </div>
+
+            <!-- SEO Section for new products -->
+            <details class="shopify-seo-section">
+              <summary>SEO</summary>
+              <div class="shopify-seo-content">
+                <div class="shopify-form-field">
+                  <label for="shopify-seo-title">SEO Title <span class="field-hint char-count" id="new-seo-title-count">0/70</span></label>
+                  <input type="text" id="shopify-seo-title" placeholder="Page title for search engines" maxlength="70">
+                </div>
+                <div class="shopify-form-field">
+                  <label for="shopify-seo-description">SEO Description <span class="field-hint char-count" id="new-seo-desc-count">0/160</span></label>
+                  <textarea id="shopify-seo-description" rows="2" placeholder="Meta description for search engines" maxlength="160"></textarea>
+                </div>
+              </div>
+            </details>
+
+            <!-- Variants Section for New Products -->
+            <div id="shopify-new-variants-section" class="shopify-form-field">
+              <div class="shopify-new-variants-header">
+                <label>Variants <span class="field-hint" id="shopify-new-variant-count">(1 variant)</span></label>
+                <button type="button" class="shopify-add-variant-btn" onclick="window.addNewProductVariant()">+ Add Variant</button>
+              </div>
+              <div id="shopify-new-variants-table" class="shopify-variants-table">
+                <div class="shopify-variant-row header">
+                  <div>Option Value</div>
+                  <div>Price</div>
+                  <div>Stock</div>
+                  <div title="Auto-generated SKU">SKU</div>
+                  <div></div>
+                </div>
+                <!-- Default variant row -->
+                <div class="shopify-variant-row new-variant-row" data-variant-index="0">
+                  <div class="shopify-variant-option">
+                    <input type="text" data-field="optionValue" value="Default" placeholder="e.g. Matte Black">
+                  </div>
+                  <div class="shopify-variant-price">
+                    <input type="number" step="0.01" min="0" data-field="price" placeholder="0.00">
+                  </div>
+                  <div class="shopify-variant-inventory">
+                    <input type="number" min="0" data-field="stock" value="0" placeholder="0">
+                  </div>
+                  <div class="shopify-variant-sku-preview">
+                    <code>GR-???-???-???-000-01</code>
+                  </div>
+                  <div class="shopify-variant-actions">
+                    <button type="button" class="shopify-remove-variant-btn" onclick="window.removeNewProductVariant(0)" title="Remove variant" disabled>×</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Review Flags - inline -->
+            <div id="shopify-review-flags" class="shopify-flags-inline">
+              <label class="shopify-flag"><input type="checkbox" id="shopify-needs-measurement" checked> Measurement</label>
+              <label class="shopify-flag"><input type="checkbox" id="shopify-needs-pricing" checked> Pricing</label>
+              <label class="shopify-flag"><input type="checkbox" id="shopify-needs-photography" checked> Photography</label>
+              <label class="shopify-flag"><input type="checkbox" id="shopify-not-approved" checked> Not approved</label>
+            </div>
+          </div>
+
+          <!-- Photos Section -->
+          <div id="shopify-photos-section" class="shopify-photos-compact">
+            <div class="shopify-photos-header">
+              <label>Photos <span class="field-hint">(right-click local photos for thumbnail)</span></label>
+              <div class="shopify-photo-controls">
+                <div class="shopify-photo-size-control">
+                  <span class="size-label">Size:</span>
+                  <button type="button" class="photo-size-btn" data-size="small" title="Small thumbnails">S</button>
+                  <button type="button" class="photo-size-btn active" data-size="medium" title="Medium thumbnails">M</button>
+                  <button type="button" class="photo-size-btn" data-size="large" title="Large thumbnails">L</button>
+                </div>
+                <div class="shopify-photo-btns">
+                  <button type="button" onclick="if(typeof window.refreshShopifyPhotos==='function')window.refreshShopifyPhotos()">Refresh</button>
+                  <button type="button" onclick="if(typeof window.browseShopifyPhotos==='function')window.browseShopifyPhotos()">Browse...</button>
+                </div>
+              </div>
+            </div>
+            <div id="shopify-photo-grid" class="shopify-photo-grid-compact" data-size="medium">
+              <!-- Populated dynamically -->
+            </div>
+          </div>
+
+          <p id="shopify-editor-status" class="shopify-status-msg"></p>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="shopify-reconciliation-dialog" class="modal shopify-reconciliation">
+      <form method="dialog">
+        <h3>Shopify Reconciliation</h3>
+        <p class="setting-description">
+          Link your Printventory products to existing Shopify listings. This ensures updates go to the correct listing instead of creating duplicates.
+        </p>
+
+        <div class="reconciliation-toolbar">
+          <div class="reconciliation-filter-group">
+            <label for="reconciliation-filetype-filter">File Type:</label>
+            <select id="reconciliation-filetype-filter">
+              <option value="3mf" selected>3MF Only</option>
+              <option value="">All Files</option>
+              <option value="stl">STL Only</option>
+            </select>
+          </div>
+          <div class="reconciliation-filter-group">
+            <label for="reconciliation-designer-filter">Designer:</label>
+            <select id="reconciliation-designer-filter">
+              <option value="">All Designers</option>
+            </select>
+          </div>
+          <div class="reconciliation-filter-group">
+            <label for="reconciliation-sort">Sort:</label>
+            <select id="reconciliation-sort">
+              <option value="name-asc">Name (A-Z)</option>
+              <option value="name-desc">Name (Z-A)</option>
+              <option value="status-linked">Status (Linked First)</option>
+              <option value="status-unlinked">Status (Unlinked First)</option>
+              <option value="designer-asc">Designer (A-Z)</option>
+              <option value="designer-desc">Designer (Z-A)</option>
+            </select>
+          </div>
+          <div class="reconciliation-filter-group">
+            <label for="reconciliation-status-filter">Status:</label>
+            <select id="reconciliation-status-filter">
+              <option value="">All</option>
+              <option value="unlinked">Unlinked Only</option>
+              <option value="linked">Linked Only</option>
+              <option value="new">New Only</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="reconciliation-status" class="reconciliation-status">
+          <span class="status-text">Loading...</span>
+        </div>
+
+        <div id="reconciliation-list" class="reconciliation-list">
+          <!-- Populated dynamically -->
+        </div>
+
+        <div class="dialog-buttons">
+          <button type="button" id="reconciliation-refresh" onclick="if(typeof window.refreshReconciliation==='function')window.refreshReconciliation()">Refresh from Shopify</button>
+          <button type="button" id="reconciliation-close" onclick="document.getElementById('shopify-reconciliation-dialog')?.close()">Close</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog id="ai-config-dialog" class="modal">
       <form method="dialog">
         <h3>AI Configuration</h3>
@@ -1598,13 +1890,15 @@
     <div id="folder-tree-popover-tree" class="folder-tree"></div>
     <div id="folder-tree-resize-handle" class="panel-resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize folders panel" title="Drag to resize folders panel"></div>
   </div>
-  <div class="main-content">
-    <main>
-      <div class="grid-view-selector-background"></div>
-      <div class="grid-view-selector">
-        <button type="button" id="folder-rail-toggle" class="folder-rail-toggle" title="Show folder tree beside the grid">
-          <span>Folders</span>
-        </button>
+  <header id="app-toolbar" class="app-toolbar">
+    <div class="toolbar-left">
+      <!-- Left side intentionally minimal - filters are in the Filters Pane -->
+    </div>
+    <div class="toolbar-center">
+      <!-- Center can hold global status or be empty -->
+    </div>
+    <div class="toolbar-right">
+      <div class="toolbar-view-buttons">
         <button class="view-button active" data-view="detailed" title="Detailed - Large thumbnails with full details">
           <span>Detailed</span>
         </button>
@@ -1614,15 +1908,300 @@
         <button class="view-button" data-view="list" title="List - Horizontal list view">
           <span>List</span>
         </button>
-        <div class="preview-size-switcher" id="preview-size-switcher" hidden title="Tile size">
+        <div class="preview-size-switcher" id="toolbar-preview-size-switcher" hidden title="Tile size">
           <button type="button" data-preview-size="s" title="Small tiles">S</button>
           <button type="button" data-preview-size="m" class="active" title="Medium tiles">M</button>
           <button type="button" data-preview-size="l" title="Large tiles">L</button>
         </div>
-        <button type="button" id="list-view-columns-toolbar-btn" class="list-view-columns-toolbar-btn" title="Show or hide columns. Drag column headers to reorder; drag a column edge to resize." hidden>
-          Show/Hide columns
+        <button type="button" id="toolbar-list-columns-btn" class="list-view-columns-toolbar-btn" title="Show or hide columns" hidden>
+          Columns
         </button>
       </div>
+      <button type="button" id="toolbar-folders-toggle" class="toolbar-button" title="Show folder tree beside the grid">
+        <span>Folders</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Edge Tabs Container (vertical stack for all collapsible panes) -->
+  <div id="edge-tabs-container" class="edge-tabs-container">
+    <div id="sidebar-edge-tab" class="edge-tab hidden" role="button" tabindex="0" aria-label="Show Printventory" data-pane="sidebar">
+      <span class="edge-tab-icon">🖨️</span>
+      <span class="edge-tab-label">Tools</span>
+    </div>
+    <div id="filters-pane-edge-tab" class="edge-tab hidden" role="button" tabindex="0" aria-label="Show Filters" data-pane="filters">
+      <span class="edge-tab-icon">⚙</span>
+      <span class="edge-tab-label">Filters</span>
+    </div>
+  </div>
+
+  <!-- Filters Pane (dockable) -->
+  <aside id="filters-pane" class="dockable-pane pane-pinned" role="complementary" aria-label="Filters">
+    <div class="pane-header">
+      <span class="pane-title">Filters</span>
+      <div class="pane-header-actions">
+        <button type="button" class="pane-pin-btn icon-button active" title="Unpin (auto-hide)" aria-pressed="true">
+          <span class="pin-icon-unpinned">📌</span>
+          <span class="pin-icon-pinned">📍</span>
+        </button>
+        <button type="button" class="pane-close-btn icon-button" title="Close" aria-label="Close filters pane">×</button>
+      </div>
+    </div>
+    <div class="pane-content">
+      <!-- Search -->
+      <div class="form-group search-models-field">
+        <label for="search-filter-input">Search Models:</label>
+        <div class="input-with-icon">
+          <input type="text" id="search-filter-input" placeholder="Enter search term...">
+          <button id="filter-search-button" class="icon-button" title="Add this text to the active query (all fields)">🔍</button>
+          <button id="clear-filter-search-button" class="icon-button" title="Clear search">×</button>
+        </div>
+        <label class="search-notes-toggle" title="Include notes in all-fields search. Turn off to skip long imported descriptions. A search limited to the Notes field still matches notes.">
+          <input type="checkbox" id="search-include-notes" checked>
+          <span>Include Notes</span>
+        </label>
+      </div>
+
+      <!-- Sort -->
+      <div class="form-group">
+        <label for="sort-select">Sort By:</label>
+        <select id="sort-select">
+          <option value="name-asc">Name (A-Z)</option>
+          <option value="name-desc">Name (Z-A)</option>
+          <option value="size-asc">Size (Smallest First)</option>
+          <option value="size-desc">Size (Largest First)</option>
+          <option value="date-asc">Modified (Oldest First)</option>
+          <option value="date-desc" selected>Modified (Newest First)</option>
+          <option value="dateadded-asc">Date Added (Oldest First)</option>
+          <option value="dateadded-desc">Date Added (Newest First)</option>
+          <option value="directory-asc">Parent Directory (A-Z)</option>
+          <option value="directory-desc">Parent Directory (Z-A)</option>
+          <option value="designer-asc">Designer (A-Z)</option>
+          <option value="designer-desc">Designer (Z-A)</option>
+          <option value="parentmodel-asc">Parent Model (A-Z)</option>
+          <option value="parentmodel-desc">Parent Model (Z-A)</option>
+          <option value="printed-asc">Printed (Not Printed First)</option>
+          <option value="printed-desc">Printed (Printed First)</option>
+          <option value="printstatus-asc">Print Status (Printing First)</option>
+          <option value="printstatus-desc">Print Status (Unprinted First)</option>
+          <option value="printcount-desc">Print Count (Most First)</option>
+          <option value="printcount-asc">Print Count (Least First)</option>
+          <option value="lastprinted-desc">Last Printed (Newest First)</option>
+          <option value="lastprinted-asc">Last Printed (Oldest First)</option>
+          <option value="rating-desc">Rating (Highest First)</option>
+          <option value="rating-asc">Rating (Lowest First)</option>
+        </select>
+      </div>
+
+      <!-- Group by Parent -->
+      <div class="form-group grouping-toggle-container">
+        <label class="grouping-toggle" title="Group models by their Parent Model metadata">
+          <input type="checkbox" id="grouping-display-toggle">
+          <span>Group by Parent</span>
+        </label>
+      </div>
+
+      <!-- Quick Filters -->
+      <div class="quick-filters">
+        <label class="quick-filter-checkbox" title="Show only 3MF files">
+          <input type="checkbox" id="filter-3mf-only">
+          <span>3MF Only</span>
+        </label>
+        <label class="quick-filter-checkbox" title="Show models linked to Shopify">
+          <input type="checkbox" id="filter-shopify-linked">
+          <span>Shopify Linked</span>
+        </label>
+        <label class="quick-filter-checkbox" title="Show models not linked to Shopify">
+          <input type="checkbox" id="filter-shopify-not-linked">
+          <span>Not Linked</span>
+        </label>
+      </div>
+
+      <!-- Folders -->
+      <div class="form-group">
+        <label for="folder-select">Folders:</label>
+        <div class="dropdown-with-list">
+          <select id="folder-select">
+            <option value="">All folders</option>
+          </select>
+          <button type="button" id="folder-tree-button" class="list-button icon-button folder-tree-button" title="Browse folder tree">☰</button>
+        </div>
+      </div>
+
+      <!-- More Filters Toggle -->
+      <button type="button" id="filter-stack-toggle" class="filter-stack-toggle" aria-expanded="false" aria-controls="filter-stack">
+        <span class="filter-stack-toggle-label">More filters</span>
+        <span class="filter-stack-toggle-chevron" aria-hidden="true">▸</span>
+      </button>
+
+      <!-- More Filters Section -->
+      <div id="filter-stack" class="filter-stack">
+        <div class="form-group">
+          <label for="designer-select">Select Designer:</label>
+          <div class="dropdown-with-list">
+            <select id="designer-select">
+              <option value="">All Designers</option>
+            </select>
+            <button type="button" class="list-button icon-button" data-field="designer" data-target="designer-select" title="Search existing designers">☰</button>
+          </div>
+          <div id="designer-filter-chips" class="filter-multi-chips" hidden></div>
+          <div id="designer-combine-row" class="filter-combine-row query-builder-control" hidden>
+            <span class="filter-combine-label">Match:</span>
+            <label><input type="radio" name="designer-combine" value="OR" checked> Any</label>
+            <label><input type="radio" name="designer-combine" value="AND"> All</label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="parent-select">Select Parent Model:</label>
+          <div class="dropdown-with-list">
+            <select id="parent-select">
+              <option value="">All Parent Models</option>
+            </select>
+            <button type="button" class="list-button icon-button" data-field="parent" data-target="parent-select" title="Search existing parent models">☰</button>
+          </div>
+          <div id="parentModel-filter-chips" class="filter-multi-chips" hidden></div>
+          <div id="parentModel-combine-row" class="filter-combine-row query-builder-control" hidden>
+            <span class="filter-combine-label">Match:</span>
+            <label><input type="radio" name="parentModel-combine" value="OR" checked> Any</label>
+            <label><input type="radio" name="parentModel-combine" value="AND"> All</label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="license-select">Select License:</label>
+          <div class="dropdown-with-list">
+            <select id="license-select">
+              <option value="">All Licenses</option>
+            </select>
+            <button type="button" class="list-button icon-button" data-field="license" data-target="license-select" title="Search existing licenses">☰</button>
+          </div>
+          <div id="license-filter-chips" class="filter-multi-chips" hidden></div>
+          <div id="license-combine-row" class="filter-combine-row query-builder-control" hidden>
+            <span class="filter-combine-label">Match:</span>
+            <label><input type="radio" name="license-combine" value="OR" checked> Any</label>
+            <label><input type="radio" name="license-combine" value="AND"> All</label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="printed-select">Print Status:</label>
+          <select id="printed-select">
+            <option value="all">All Models</option>
+            <option value="unprinted">Unprinted</option>
+            <option value="want">Want</option>
+            <option value="queued">Queued</option>
+            <option value="printing">Printing</option>
+            <option value="printed">Printed</option>
+            <option value="failed">Failed</option>
+            <option value="ever-printed">Ever printed</option>
+            <option value="never-printed">Never printed</option>
+            <option value="not-printed">Not printed</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="new-select">New Status:</label>
+          <select id="new-select">
+            <option value="all">All Models</option>
+            <option value="new">New Models Only</option>
+            <option value="not-new">Exclude New Models</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="favorite-select">Favorite:</label>
+          <select id="favorite-select">
+            <option value="all">All Models</option>
+            <option value="favorited">Favorites</option>
+            <option value="not-favorited">Not Favorites</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="rating-select">Rating:</label>
+          <select id="rating-select">
+            <option value="all">All Ratings</option>
+            <option value="unrated">Unrated</option>
+            <option value="1">1 Star</option>
+            <option value="2">2 Stars</option>
+            <option value="3">3 Stars</option>
+            <option value="4">4 Stars</option>
+            <option value="5">5 Stars</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="rating-min-select">Min Rating:</label>
+          <select id="rating-min-select">
+            <option value="all">All</option>
+            <option value="1">At Least 1</option>
+            <option value="2">At Least 2</option>
+            <option value="3">At Least 3</option>
+            <option value="4">At Least 4</option>
+            <option value="5">At Least 5</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="filetype-select">File Type:</label>
+          <select id="filetype-select">
+            <option value="">All Types</option>
+            <option value="stl">STL</option>
+            <option value="3mf" selected>3MF</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="tag-filter">Filter by Tag:</label>
+          <div class="dropdown-with-list">
+            <div class="tags-input-container">
+              <select id="tag-filter">
+                <option value="">All Tags</option>
+              </select>
+            </div>
+            <button type="button" class="list-button icon-button" data-field="tag" data-target="tag-filter" title="Search existing tags">☰</button>
+          </div>
+          <div id="tags-filter-chips" class="filter-multi-chips" hidden></div>
+          <div id="tags-combine-row" class="filter-combine-row query-builder-control" hidden>
+            <span class="filter-combine-label">Match:</span>
+            <label><input type="radio" name="tags-combine" value="OR"> Any tag</label>
+            <label><input type="radio" name="tags-combine" value="AND" checked> All tags</label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="filament-filter">Filter by Filament:</label>
+          <div class="dropdown-with-list">
+            <div class="tags-input-container">
+              <select id="filament-filter">
+                <option value="">All Filaments</option>
+              </select>
+            </div>
+            <button type="button" class="list-button icon-button" data-field="filament" data-target="filament-filter" title="Search existing filaments">☰</button>
+          </div>
+          <div id="filaments-filter-chips" class="filter-multi-chips" hidden></div>
+          <div id="filaments-combine-row" class="filter-combine-row query-builder-control" hidden>
+            <span class="filter-combine-label">Match:</span>
+            <label><input type="radio" name="filaments-combine" value="OR"> Any filament</label>
+            <label><input type="radio" name="filaments-combine" value="AND" checked> All filaments</label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <button type="button" id="invert-filter-button" title="Invert the current filter (NOT equal instead of equal)">Invert Filters</button>
+        </div>
+
+        <div class="form-group">
+          <button id="edit-mode-toggle">Multi-Edit Mode</button>
+        </div>
+      </div>
+    </div>
+    <div id="filters-pane-resize-handle" class="panel-resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize filters pane" title="Drag to resize filters pane"></div>
+  </aside>
+
+  <div class="main-content">
+    <main>
       <div class="file-grid"></div>
       <dialog id="welcome-message" class="welcome-dialog">
         <div class="welcome-content">
@@ -2624,6 +3203,9 @@ docker run -d --name printventory-server -p 5000:5000 -v printventory-data:/root
       </dialog>
     </main>
   </div>
+
+  <!-- Details/Tools are in the sidebar which stacks with filters pane -->
+
   <div id="loading-overlay">
     <div class="spinner">
       <div class="loader"></div>
@@ -2701,7 +3283,10 @@ docker run -d --name printventory-server -p 5000:5000 -v printventory-data:/root
   <script src="preview.js"></script>
   <script src="query-builder.js"></script>
   <script src="search.js"></script>
+  <script src="pane-controller.js"></script>
   <script src="sidebar-layout.js"></script>
+  <script src="filters-pane.js"></script>
+  <script src="toolbar-sync.js"></script>
   <script src="folder-tree.js"></script>
   <script src="step-assembly.js"></script>
   <script src="notes-markdown.js"></script>

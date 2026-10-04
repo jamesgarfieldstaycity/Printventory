@@ -1,7 +1,7 @@
 /* Dense "wall" layout for Preview view — keep separate from styles.css (see plan). */
 
 /* S/M/L tile control: only when Preview is active (JS adds .preview-view-active + hidden). */
-.grid-view-selector:not(.preview-view-active) .preview-size-switcher {
+.toolbar-view-buttons:not(.preview-view-active) .preview-size-switcher {
   display: none !important;
   visibility: hidden !important;
   pointer-events: none !important;
@@ -14,16 +14,24 @@
 .file-grid.preview-wall {
   --preview-tile: 180px;
   padding: 8px 0 16px;
-  margin-left: calc(var(--sidebar-width, 350px) + 20px + var(--folder-rail-width, 0px));
-  width: calc(100% - (var(--sidebar-width, 350px) + 40px + var(--folder-rail-width, 0px)));
-  max-width: calc(100vw - (var(--sidebar-width, 350px) + 40px + var(--folder-rail-width, 0px)));
+  /* Default: no sidebar pinned */
+  margin-left: calc(20px + var(--folder-rail-width, 0px));
+  width: calc(100% - (40px + var(--folder-rail-width, 0px)));
+  max-width: calc(100vw - (40px + var(--folder-rail-width, 0px)));
   background-image: none;
   background-color: transparent;
   gap: 0;
   row-gap: 0;
 }
 
-/* Toolbar: S / M / L tile size (placed after List in index.html; spacing via .grid-view-selector gap) */
+/* Preview wall when sidebar is pinned */
+body.sidebar-pinned .file-grid.preview-wall {
+  margin-left: calc(var(--sidebar-width, 320px) + 20px + var(--folder-rail-width, 0px));
+  width: calc(100% - (var(--sidebar-width, 320px) + 40px + var(--folder-rail-width, 0px)));
+  max-width: calc(100vw - (var(--sidebar-width, 320px) + 40px + var(--folder-rail-width, 0px)));
+}
+
+/* Toolbar: S / M / L tile size (placed in toolbar-view-buttons) */
 .preview-size-switcher {
   display: inline-flex;
   align-items: center;

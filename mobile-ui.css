@@ -534,8 +534,7 @@ body.mobile-ui main {
   margin: 0 !important;
 }
 
-body.mobile-ui .grid-view-selector,
-body.mobile-ui .grid-view-selector-background,
+body.mobile-ui .app-toolbar,
 body.mobile-ui .file-grid,
 body.mobile-ui .file-grid.preview-wall,
 body.mobile-ui .list-view-header {
@@ -544,15 +543,19 @@ body.mobile-ui .list-view-header {
   max-width: 100vw !important;
 }
 
-body.mobile-ui .grid-view-selector-background {
-  min-height: 52px;
-  padding: 8px 0;
+/* Hide app toolbar on mobile - use native mobile bar instead */
+body.mobile-ui .app-toolbar {
+  display: none;
 }
 
-body.mobile-ui .grid-view-selector {
-  flex-wrap: wrap;
-  padding: 8px 10px 6px;
-  gap: 6px;
+/* Hide sidebar hover trigger on mobile */
+body.mobile-ui .sidebar-hover-trigger {
+  display: none;
+}
+
+/* Mobile uses its own main content positioning */
+body.mobile-ui .main-content {
+  margin-top: 0 !important;
 }
 
 body.mobile-ui .view-button {

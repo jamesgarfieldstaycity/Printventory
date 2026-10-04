@@ -70,7 +70,7 @@ const earlyEventChannels = [
   'open-theme-settings', 'clear-new-flags', 'regenerate-thumbnails', 'generate-missing-thumbnails',
   'start-print-roulette', 'open-dedup', 'open-tag-manager', 'open-filament-manager', 'open-printer-management', 'open-parts-stock', 'open-stats',
   'open-backup-restore', 'open-ai-config', 'open-file-type-settings', 'open-performance-settings',
-  'open-slicer-settings', 'open-browser-extension-settings', 'open-mcp-server-settings', 'open-https-settings', 'open-purge-models',
+  'open-slicer-settings', 'open-browser-extension-settings', 'open-mcp-server-settings', 'open-https-settings', 'open-shopify-settings', 'open-purge-models',
   'open-metadata-editor', 'open-system-report', 'open-manage-thumbnails',
   'open-settings', 'open-guide', 'open-about', 'open-keyboard-shortcuts',
   'open-server-mode-info',
@@ -314,6 +314,3244 @@ if (window._electronPendingEvents && window._electronPendingEvents['open-https-s
   delete window._electronPendingEvents['open-https-settings'];
 }
 document.addEventListener('DOMContentLoaded', bindHttpsSettingsDialog);
+
+// ============================================================================
+// Shopify Settings Dialog
+// ============================================================================
+
+/**
+ * Open the Shopify settings dialog and load current settings.
+ */
+window.openShopifySettings = async function openShopifySettings() {
+  const dialog = document.getElementById('shopify-settings-dialog');
+  if (!dialog) return;
+
+  const statusBanner = document.getElementById('shopify-status-banner');
+  const statusText = document.getElementById('shopify-status-text');
+  const configDetails = document.getElementById('shopify-config-details');
+  const mainActions = document.getElementById('shopify-main-actions');
+
+  // Load current settings
+  let isConfigured = false;
+  try {
+    const settings = await window.electron.getShopifySettings();
+    document.getElementById('shopify-store-domain').value = settings?.storeDomain || '';
+    document.getElementById('shopify-client-id').value = settings?.clientId || '';
+    document.getElementById('shopify-client-secret').value = settings?.hasCredentials ? '********' : '';
+    document.getElementById('shopify-api-version').value = settings?.apiVersion || '2024-10';
+    document.getElementById('shopify-connection-status').textContent = '';
+    document.getElementById('shopify-connection-status').className = 'setting-description';
+
+    // Check if configured
+    isConfigured = !!(settings?.storeDomain && settings?.hasCredentials);
+
+    if (isConfigured) {
+      statusBanner.className = 'shopify-status-banner connected';
+      statusText.textContent = `Connected to ${settings.storeDomain}`;
+      configDetails.removeAttribute('open');
+    } else {
+      statusBanner.className = 'shopify-status-banner not-configured';
+      statusText.textContent = 'Not configured - expand settings below';
+      configDetails.setAttribute('open', '');
+    }
+  } catch (e) {
+    console.error('Error loading Shopify settings:', e);
+    statusBanner.className = 'shopify-status-banner not-configured';
+    statusText.textContent = 'Not configured';
+    configDetails.setAttribute('open', '');
+  }
+
+  // Update counts (async, don't block dialog)
+  window.refreshShopifyDialogCounts(isConfigured);
+
+  dialog.showModal();
+};
+
+/**
+ * Refresh the linked/unlinked counts in the Shopify dialog.
+ */
+window.refreshShopifyDialogCounts = async function refreshShopifyDialogCounts(isConfigured) {
+  const linkedCountEl = document.getElementById('shopify-linked-count');
+  const unlinkedCountEl = document.getElementById('shopify-unlinked-count');
+  const reconcileBtn = document.getElementById('shopify-reconcile-btn');
+  const refreshBtn = document.getElementById('shopify-refresh-btn');
+  const typesBtn = document.getElementById('shopify-types-btn');
+
+  // Disable actions if not configured
+  if (reconcileBtn) reconcileBtn.disabled = !isConfigured;
+  if (refreshBtn) refreshBtn.disabled = !isConfigured;
+
+  if (!isConfigured) {
+    if (linkedCountEl) linkedCountEl.textContent = '';
+    if (unlinkedCountEl) unlinkedCountEl.textContent = '';
+    return;
+  }
+
+  try {
+    // Get linked count
+    const linkedIds = await window.electron.getLinkedShopifyProductIds();
+    const linkedCount = linkedIds?.length || 0;
+    if (linkedCountEl) {
+      linkedCountEl.textContent = `${linkedCount} linked`;
+      linkedCountEl.className = linkedCount > 0 ? 'action-count has-items' : 'action-count';
+    }
+
+    // Get unlinked folders count
+    const folders = await window.electron.getUnlinkedFolders(false);
+    const unlinkedCount = folders?.length || 0;
+    if (unlinkedCountEl) {
+      unlinkedCountEl.textContent = unlinkedCount > 0 ? `${unlinkedCount} to link` : 'All linked';
+      unlinkedCountEl.className = unlinkedCount > 0 ? 'action-count has-items' : 'action-count';
+    }
+  } catch (e) {
+    console.error('Error fetching Shopify counts:', e);
+  }
+};
+
+/**
+ * Refresh linked listings count (called from button).
+ */
+window.refreshShopifyLinkedCount = async function refreshShopifyLinkedCount() {
+  const refreshBtn = document.getElementById('shopify-refresh-btn');
+  const linkedCountEl = document.getElementById('shopify-linked-count');
+
+  if (refreshBtn) refreshBtn.disabled = true;
+  if (linkedCountEl) linkedCountEl.textContent = 'Refreshing...';
+
+  try {
+    // Clear the products cache to force re-fetch
+    shopifyProductsCache = null;
+
+    const linkedIds = await window.electron.getLinkedShopifyProductIds();
+    const linkedCount = linkedIds?.length || 0;
+    if (linkedCountEl) {
+      linkedCountEl.textContent = `${linkedCount} linked`;
+      linkedCountEl.className = linkedCount > 0 ? 'action-count has-items' : 'action-count';
+    }
+  } catch (e) {
+    console.error('Error refreshing linked count:', e);
+    if (linkedCountEl) linkedCountEl.textContent = 'Error';
+  } finally {
+    if (refreshBtn) refreshBtn.disabled = false;
+  }
+};
+
+/**
+ * Save Shopify settings from the dialog.
+ */
+window.saveShopifySettingsFromDialog = async function saveShopifySettingsFromDialog() {
+  const dialog = document.getElementById('shopify-settings-dialog');
+  const statusEl = document.getElementById('shopify-connection-status');
+
+  try {
+    const settings = {
+      storeDomain: document.getElementById('shopify-store-domain')?.value?.trim() || '',
+      clientId: document.getElementById('shopify-client-id')?.value?.trim() || '',
+      clientSecret: document.getElementById('shopify-client-secret')?.value?.trim() || '',
+      apiVersion: document.getElementById('shopify-api-version')?.value || '2024-10'
+    };
+
+    await window.electron.saveShopifySettings(settings);
+
+    if (statusEl) {
+      statusEl.textContent = 'Settings saved.';
+      statusEl.className = 'setting-description success-text';
+    }
+
+    setTimeout(() => {
+      dialog?.close();
+    }, 500);
+  } catch (e) {
+    console.error('Error saving Shopify settings:', e);
+    if (statusEl) {
+      statusEl.textContent = 'Error saving settings: ' + (e.message || e);
+      statusEl.className = 'setting-description warning-text';
+    }
+  }
+};
+
+/**
+ * Test Shopify API connection from the dialog (using Client Credentials Grant).
+ * On success, automatically saves the credentials.
+ */
+window.testShopifyConnectionFromDialog = async function testShopifyConnectionFromDialog() {
+  const statusEl = document.getElementById('shopify-connection-status');
+  const testBtn = document.getElementById('shopify-test-connection');
+
+  if (testBtn) testBtn.disabled = true;
+  if (statusEl) {
+    statusEl.textContent = 'Testing connection...';
+    statusEl.className = 'setting-description';
+  }
+
+  try {
+    const storeDomain = document.getElementById('shopify-store-domain')?.value?.trim() || '';
+    const clientId = document.getElementById('shopify-client-id')?.value?.trim() || '';
+    const clientSecret = document.getElementById('shopify-client-secret')?.value?.trim() || '';
+
+    // Test connection first
+    const result = await window.electron.testShopifyConnection(
+      storeDomain,
+      clientId,
+      clientSecret === '********' ? undefined : clientSecret
+    );
+
+    // On success, auto-save the credentials
+    if (statusEl) {
+      statusEl.textContent = 'Connected! Saving credentials...';
+      statusEl.className = 'setting-description';
+    }
+
+    await window.electron.saveShopifySettings({
+      storeDomain,
+      clientId,
+      clientSecret,
+      apiVersion: document.getElementById('shopify-api-version')?.value || '2024-10'
+    });
+
+    if (statusEl) {
+      statusEl.textContent = `Connected to "${result.shopName}" (${result.currency}) - Credentials saved.`;
+      statusEl.className = 'setting-description success-text';
+    }
+
+    // Update status banner to show connected
+    const statusBanner = document.getElementById('shopify-status-banner');
+    const statusText = document.getElementById('shopify-status-text');
+    const configDetails = document.getElementById('shopify-config-details');
+    if (statusBanner) statusBanner.className = 'shopify-status-banner connected';
+    if (statusText) statusText.textContent = `Connected to ${storeDomain}`;
+    if (configDetails) configDetails.removeAttribute('open');
+
+    // Refresh counts now that we're connected
+    await window.refreshShopifyDialogCounts(true);
+
+    // Prompt to reconcile products
+    setTimeout(async () => {
+      if (confirm(`Connected to ${result.shopName}!\n\nWould you like to reconcile products now?\n\nThis will link your local products to existing Shopify listings.`)) {
+        document.getElementById('shopify-settings-dialog')?.close();
+        await window.openShopifyReconciliationDialog();
+      }
+    }, 300);
+
+  } catch (e) {
+    console.error('Shopify connection test failed:', e);
+    if (statusEl) {
+      statusEl.textContent = 'Connection failed: ' + (e.message || e);
+      statusEl.className = 'setting-description warning-text';
+    }
+  } finally {
+    if (testBtn) testBtn.disabled = false;
+  }
+};
+
+window._electronRealEventHandlers['open-shopify-settings'] = async function() {
+  await window.openShopifySettings();
+};
+if (window._electronPendingEvents && window._electronPendingEvents['open-shopify-settings']) {
+  window._electronPendingEvents['open-shopify-settings'].forEach((args) => {
+    window._electronRealEventHandlers['open-shopify-settings'].apply(null, args);
+  });
+  delete window._electronPendingEvents['open-shopify-settings'];
+}
+
+// ============================================================================
+// Shopify Product Editor
+// ============================================================================
+
+// Store current model context for the product editor
+window._shopifyEditorContext = {
+  modelId: null,
+  modelPath: null,
+  modelFolder: null,
+  existingProductId: null,
+  photos: []
+};
+
+// Set up event delegation for photo grid context menu (runs once when DOM ready)
+// Uses Electron's native Menu API via IPC to avoid z-index/top-layer issues with <dialog>
+(function setupPhotoGridContextMenu() {
+  const attach = () => {
+    const gridEl = document.getElementById('shopify-photo-grid');
+    if (!gridEl) return;
+
+    gridEl.addEventListener('contextmenu', async (event) => {
+      const photoItem = event.target.closest('.shopify-photo-item');
+      if (!photoItem) return; // Click wasn't on a photo tile
+
+      event.preventDefault();
+
+      const index = parseInt(photoItem.dataset.index, 10);
+      if (isNaN(index)) return;
+
+      const photo = window._shopifyEditorContext.photos[index];
+      if (!photo) return;
+
+      const modelPath = window._shopifyEditorContext.modelPath;
+
+      // Call main process to show native context menu
+      const result = await window.electron.showPhotoContextMenu({
+        imagePath: photo.path,
+        modelPath: modelPath,
+        isShopifyImage: photo.isShopifyImage || false
+      });
+
+      // Handle result
+      if (result && result.success) {
+        console.log('[Shopify] Thumbnail set from photo:', photo.filename);
+        // Refresh the model display to show the new thumbnail
+        if (typeof refreshModelDisplay === 'function') {
+          await refreshModelDisplay();
+        }
+        // Brief visual feedback on the photo tile
+        photoItem.style.outline = '2px solid #4CAF50';
+        photoItem.style.outlineOffset = '-2px';
+        setTimeout(() => {
+          photoItem.style.outline = '';
+          photoItem.style.outlineOffset = '';
+        }, 1500);
+      } else if (result && result.error) {
+        console.error('[Shopify] Error setting thumbnail:', result.error);
+      }
+    });
+  };
+
+  // Attach when DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', attach);
+  } else {
+    attach();
+  }
+})();
+
+/**
+ * Open the Shopify product editor for the currently selected model.
+ */
+window.openShopifyProductEditor = async function openShopifyProductEditor() {
+  const dialog = document.getElementById('shopify-product-editor-dialog');
+  if (!dialog) return;
+
+  // Get the current model from the model details panel
+  const pathContainer = document.getElementById('path-tree-container');
+  const modelPath = pathContainer?.getAttribute('data-file-path') || pathContainer?.dataset?.filePath || '';
+  const modelName = document.getElementById('model-name')?.value || '';
+
+  if (!modelPath) {
+    alert('Please select a model first.');
+    return;
+  }
+
+  // Get model folder
+  const modelFolder = modelPath.substring(0, modelPath.lastIndexOf('\\')) || modelPath.substring(0, modelPath.lastIndexOf('/'));
+
+  // Store context
+  window._shopifyEditorContext.modelPath = modelPath;
+  window._shopifyEditorContext.modelFolder = modelFolder;
+
+  // Get model ID from the database
+  try {
+    const model = await window.electron.getModel(modelPath);
+    window._shopifyEditorContext.modelId = model?.id;
+  } catch (e) {
+    console.error('Error getting model:', e);
+  }
+
+  // Check if there's an existing Shopify product for this model
+  try {
+    const existingProduct = await window.electron.getShopifyProductByModel(window._shopifyEditorContext.modelId);
+    if (existingProduct) {
+      window._shopifyEditorContext.existingProductId = existingProduct.id;
+      await window.populateShopifyEditorFromProduct(existingProduct);
+      // Update link status section
+      updateShopifyLinkSection(existingProduct);
+    } else {
+      window._shopifyEditorContext.existingProductId = null;
+      await window.resetShopifyEditorForNewProduct(modelName, modelFolder);
+      // Update link status section - not linked
+      updateShopifyLinkSection(null);
+    }
+  } catch (e) {
+    console.error('Error checking existing product:', e);
+    window._shopifyEditorContext.existingProductId = null;
+    await window.resetShopifyEditorForNewProduct(modelName, modelFolder);
+    updateShopifyLinkSection(null);
+  }
+
+  // Load dropdowns
+  await window.loadShopifyEditorDropdowns();
+
+  // Load photos
+  await window.refreshShopifyPhotos();
+
+  // Initialize SEO character counters
+  initShopifySeoCounters();
+
+  // Initialize description toggles
+  initShopifyDescriptionToggles();
+
+  // Initialize photo size controls
+  await window.initPhotoSizeControls();
+
+  dialog.showModal();
+};
+
+/**
+ * Update the Shopify link status section in the editor.
+ * @param {Object|null} product - The linked Shopify product, or null if not linked.
+ */
+function updateShopifyLinkSection(product) {
+  const statusText = document.getElementById('shopify-link-status-text');
+  const productInfo = document.getElementById('shopify-link-product-info');
+  const unlinkBtn = document.getElementById('shopify-unlink-btn');
+  const linkExistingBtn = document.getElementById('shopify-link-existing-btn');
+
+  if (!statusText) return;
+
+  if (product && product.shopify_product_id) {
+    // Model is linked to a Shopify product
+    statusText.textContent = 'Linked';
+    statusText.className = 'shopify-link-status-text linked';
+    productInfo.textContent = product.title ? `"${product.title}"` : `(ID: ${product.shopify_product_id})`;
+    productInfo.style.display = 'inline';
+    unlinkBtn.style.display = 'inline-block';
+    linkExistingBtn.style.display = 'none';
+  } else if (product) {
+    // Has local product but not pushed to Shopify
+    statusText.textContent = 'Local only';
+    statusText.className = 'shopify-link-status-text';
+    productInfo.textContent = product.title ? `"${product.title}" (not pushed)` : '(not pushed)';
+    productInfo.style.display = 'inline';
+    unlinkBtn.style.display = 'inline-block';
+    linkExistingBtn.style.display = 'none';
+  } else {
+    // Not linked
+    statusText.textContent = 'Not linked';
+    statusText.className = 'shopify-link-status-text not-linked';
+    productInfo.textContent = '';
+    productInfo.style.display = 'none';
+    unlinkBtn.style.display = 'none';
+    linkExistingBtn.style.display = 'inline-block';
+  }
+}
+
+/**
+ * Unlink the current model from its Shopify product.
+ */
+window.unlinkShopifyProduct = async function unlinkShopifyProduct() {
+  const modelId = window._shopifyEditorContext?.modelId;
+  if (!modelId) {
+    alert('No model selected.');
+    return;
+  }
+
+  if (!confirm('Unlink this model from its Shopify product?\n\nThe Shopify product will remain in your store, but this model will no longer be associated with it.')) {
+    return;
+  }
+
+  try {
+    await window.electron.unlinkShopifyProduct(modelId);
+    console.log('[Shopify] Model unlinked successfully');
+
+    // Update the UI
+    window._shopifyEditorContext.existingProductId = null;
+    updateShopifyLinkSection(null);
+
+    // Reset to new product mode
+    const modelName = document.getElementById('model-name')?.value || '';
+    const modelFolder = window._shopifyEditorContext.modelFolder || '';
+    await window.resetShopifyEditorForNewProduct(modelName, modelFolder);
+
+    // Refresh grid to update badges
+    if (typeof refreshModelDisplay === 'function') {
+      await refreshModelDisplay();
+    }
+  } catch (error) {
+    console.error('Error unlinking Shopify product:', error);
+    alert('Failed to unlink: ' + (error.message || error));
+  }
+};
+
+/**
+ * Show dialog to link model to an existing Shopify product.
+ */
+window.linkToExistingShopifyProduct = async function linkToExistingShopifyProduct() {
+  const modelId = window._shopifyEditorContext?.modelId;
+  if (!modelId) {
+    alert('No model selected.');
+    return;
+  }
+
+  try {
+    // Get available products to link
+    const products = await window.electron.getLinkableShopifyProducts();
+
+    if (!products || products.length === 0) {
+      alert('No Shopify products available to link.\n\nProducts must be pushed to Shopify before they can be linked.');
+      return;
+    }
+
+    // Create a simple selection dialog
+    const dialogHtml = `
+      <dialog id="shopify-link-select-dialog" class="modal" style="max-width: 500px;">
+        <h3 style="margin-top: 0;">Link to Existing Shopify Product</h3>
+        <p style="color: rgba(255,255,255,0.6); font-size: 0.9em;">Select a Shopify product to link this model to:</p>
+        <select id="shopify-link-product-select" style="width: 100%; padding: 8px; margin-bottom: 16px;">
+          <option value="">Select a product...</option>
+          ${products.map(p => `<option value="${p.id}">${p.title || 'Untitled'} ${p.skus ? `(${p.skus})` : ''}</option>`).join('')}
+        </select>
+        <div style="display: flex; gap: 8px; justify-content: flex-end;">
+          <button type="button" id="shopify-link-cancel-btn" class="shopify-action-btn">Cancel</button>
+          <button type="button" id="shopify-link-confirm-btn" class="shopify-push-btn">Link</button>
+        </div>
+      </dialog>
+    `;
+
+    // Add dialog to DOM if not exists
+    let linkDialog = document.getElementById('shopify-link-select-dialog');
+    if (linkDialog) linkDialog.remove();
+
+    document.body.insertAdjacentHTML('beforeend', dialogHtml);
+    linkDialog = document.getElementById('shopify-link-select-dialog');
+
+    // Set up event handlers
+    document.getElementById('shopify-link-cancel-btn').onclick = () => {
+      linkDialog.close();
+      linkDialog.remove();
+    };
+
+    document.getElementById('shopify-link-confirm-btn').onclick = async () => {
+      const select = document.getElementById('shopify-link-product-select');
+      const selectedProductId = select.value;
+
+      if (!selectedProductId) {
+        alert('Please select a product.');
+        return;
+      }
+
+      try {
+        await window.electron.linkModelToShopifyProduct(modelId, parseInt(selectedProductId, 10));
+        console.log('[Shopify] Model linked successfully');
+
+        linkDialog.close();
+        linkDialog.remove();
+
+        // Refresh the editor with the newly linked product
+        const product = await window.electron.getShopifyProductByModel(modelId);
+        if (product) {
+          window._shopifyEditorContext.existingProductId = product.id;
+          await window.populateShopifyEditorFromProduct(product);
+          updateShopifyLinkSection(product);
+        }
+
+        // Refresh grid to update badges
+        if (typeof refreshModelDisplay === 'function') {
+          await refreshModelDisplay();
+        }
+      } catch (error) {
+        console.error('Error linking to Shopify product:', error);
+        alert('Failed to link: ' + (error.message || error));
+      }
+    };
+
+    linkDialog.showModal();
+  } catch (error) {
+    console.error('Error getting linkable products:', error);
+    alert('Failed to load products: ' + (error.message || error));
+  }
+};
+
+// Attach link/unlink button handlers when DOM is ready
+(function attachShopifyLinkHandlers() {
+  function attach() {
+    const unlinkBtn = document.getElementById('shopify-unlink-btn');
+    const linkExistingBtn = document.getElementById('shopify-link-existing-btn');
+
+    if (unlinkBtn) {
+      unlinkBtn.onclick = window.unlinkShopifyProduct;
+    }
+    if (linkExistingBtn) {
+      linkExistingBtn.onclick = window.linkToExistingShopifyProduct;
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', attach);
+  } else {
+    attach();
+  }
+})();
+
+/**
+ * Load collection codes and product types into dropdowns.
+ */
+window.loadShopifyEditorDropdowns = async function loadShopifyEditorDropdowns() {
+  try {
+    // Load collection codes
+    const collections = await window.electron.getShopifyCollectionCodes();
+    const collectionSelect = document.getElementById('shopify-collection-code');
+    if (collectionSelect) {
+      const currentValue = collectionSelect.value;
+      collectionSelect.innerHTML = '<option value="">Select...</option>' +
+        collections.map(c => `<option value="${c.code}">${c.code} - ${c.name}</option>`).join('') +
+        '<option value="__add_new__">+ Add new collection...</option>';
+      if (currentValue && currentValue !== '__add_new__') collectionSelect.value = currentValue;
+
+      // Add change handler for "Add new" option
+      collectionSelect.onchange = () => {
+        if (collectionSelect.value === '__add_new__') {
+          collectionSelect.value = '';
+          document.getElementById('shopify-new-collection-form').style.display = 'flex';
+          document.getElementById('shopify-new-collection-code').focus();
+        }
+        window.updateSkuPreview();
+      };
+    }
+
+    // Load product types
+    const types = await window.electron.getShopifyProductTypes();
+    const typeSelect = document.getElementById('shopify-type-code-select');
+    if (typeSelect) {
+      const currentValue = typeSelect.value;
+      typeSelect.innerHTML = '<option value="">Select...</option>' +
+        types.map(t => `<option value="${t.code}">${t.code} - ${t.name}</option>`).join('') +
+        '<option value="__add_new__">+ Add new type...</option>';
+      if (currentValue && currentValue !== '__add_new__') typeSelect.value = currentValue;
+
+      // Add change handler for "Add new" option
+      typeSelect.onchange = () => {
+        if (typeSelect.value === '__add_new__') {
+          typeSelect.value = '';
+          document.getElementById('shopify-new-type-form').style.display = 'flex';
+          document.getElementById('shopify-new-type-code').focus();
+        }
+        window.updateSkuPreview();
+      };
+    }
+  } catch (e) {
+    console.error('Error loading dropdowns:', e);
+  }
+};
+
+/**
+ * Save a new collection code from the inline form.
+ */
+window.saveNewCollection = async function saveNewCollection() {
+  const codeInput = document.getElementById('shopify-new-collection-code');
+  const nameInput = document.getElementById('shopify-new-collection-name');
+  const code = codeInput.value.trim().toUpperCase();
+  const name = nameInput.value.trim();
+
+  if (!code || !name) {
+    alert('Both code and name are required.');
+    return;
+  }
+
+  if (code.length > 4) {
+    alert('Code must be 4 characters or less.');
+    return;
+  }
+
+  if (!/^[A-Z0-9]+$/.test(code)) {
+    alert('Code must contain only letters and numbers.');
+    return;
+  }
+
+  try {
+    await window.electron.saveShopifyCollectionCode({ code, name });
+
+    // Refresh dropdowns and select the new code
+    await window.loadShopifyEditorDropdowns();
+    document.getElementById('shopify-collection-code').value = code;
+
+    // Hide form and clear inputs
+    document.getElementById('shopify-new-collection-form').style.display = 'none';
+    codeInput.value = '';
+    nameInput.value = '';
+
+    window.updateSkuPreview();
+  } catch (e) {
+    alert(`Error saving collection: ${e.message}`);
+  }
+};
+
+/**
+ * Cancel adding a new collection.
+ */
+window.cancelNewCollection = function cancelNewCollection() {
+  document.getElementById('shopify-new-collection-form').style.display = 'none';
+  document.getElementById('shopify-new-collection-code').value = '';
+  document.getElementById('shopify-new-collection-name').value = '';
+};
+
+/**
+ * Save a new product type from the inline form.
+ */
+window.saveNewType = async function saveNewType() {
+  const codeInput = document.getElementById('shopify-new-type-code');
+  const nameInput = document.getElementById('shopify-new-type-name');
+  const code = codeInput.value.trim().toUpperCase();
+  const name = nameInput.value.trim();
+
+  if (!code || !name) {
+    alert('Both code and name are required.');
+    return;
+  }
+
+  if (code.length > 4) {
+    alert('Code must be 4 characters or less.');
+    return;
+  }
+
+  if (!/^[A-Z0-9]+$/.test(code)) {
+    alert('Code must contain only letters and numbers.');
+    return;
+  }
+
+  try {
+    await window.electron.saveShopifyProductType({ code, name });
+
+    // Refresh dropdowns and select the new code
+    await window.loadShopifyEditorDropdowns();
+    document.getElementById('shopify-type-code-select').value = code;
+
+    // Hide form and clear inputs
+    document.getElementById('shopify-new-type-form').style.display = 'none';
+    codeInput.value = '';
+    nameInput.value = '';
+
+    window.updateSkuPreview();
+  } catch (e) {
+    alert(`Error saving type: ${e.message}`);
+  }
+};
+
+/**
+ * Cancel adding a new type.
+ */
+window.cancelNewType = function cancelNewType() {
+  document.getElementById('shopify-new-type-form').style.display = 'none';
+  document.getElementById('shopify-new-type-code').value = '';
+  document.getElementById('shopify-new-type-name').value = ''
+};
+
+/**
+ * Populate the editor from an existing product.
+ * Handles both linked products (shows Shopify data) and unlinked products (shows SKU generation).
+ */
+window.populateShopifyEditorFromProduct = async function populateShopifyEditorFromProduct(product) {
+  const isLinked = !!product.shopify_product_id;
+
+  // Show/hide sections based on linked status
+  const linkedSection = document.getElementById('shopify-linked-section');
+  const skuSection = document.getElementById('shopify-sku-section');
+  const newProductFields = document.getElementById('shopify-new-product-fields');
+  const newVariantsSection = document.getElementById('shopify-new-variants-section');
+  const photosSection = document.getElementById('shopify-photos-section');
+  const pushDraftBtn = document.getElementById('shopify-push-draft');
+  const pushUpdateBtn = document.getElementById('shopify-push-update');
+  const saveLocalBtn = document.getElementById('shopify-save-local');
+  const refreshBtn = document.getElementById('shopify-refresh-live');
+
+  // Update model path display
+  const modelPathEl = document.getElementById('shopify-model-path');
+  if (modelPathEl && window._shopifyEditorContext.modelPath) {
+    const fileName = window._shopifyEditorContext.modelPath.split(/[\\\/]/).pop() || '';
+    modelPathEl.textContent = fileName;
+    modelPathEl.title = window._shopifyEditorContext.modelPath;
+  }
+
+  if (isLinked) {
+    // Show linked product section, hide new product fields
+    if (linkedSection) linkedSection.style.display = 'block';
+    if (skuSection) skuSection.style.display = 'none';
+    if (newProductFields) newProductFields.style.display = 'none';
+    if (newVariantsSection) newVariantsSection.style.display = 'none';
+    if (photosSection) photosSection.style.display = 'block'; // Show photos for linked products too
+    if (pushDraftBtn) pushDraftBtn.style.display = 'none';
+    if (pushUpdateBtn) pushUpdateBtn.style.display = 'inline-block';
+    if (saveLocalBtn) saveLocalBtn.style.display = 'none';
+    if (refreshBtn) refreshBtn.style.display = 'inline-block';
+
+    // Initialize photo baseline tracking for diff-based push
+    window._shopifyEditorContext.photoBaseline = null;
+    window._shopifyEditorContext.photosModified = false;
+
+    // Fetch and display live Shopify data (including photos)
+    await window.refreshLiveShopifyData();
+  } else {
+    // Show new product fields, hide linked section
+    if (linkedSection) linkedSection.style.display = 'none';
+    if (skuSection) skuSection.style.display = 'block';
+    if (newProductFields) newProductFields.style.display = 'block';
+    if (newVariantsSection) newVariantsSection.style.display = 'block';
+    if (photosSection) photosSection.style.display = 'block';
+    if (pushDraftBtn) pushDraftBtn.style.display = 'inline-block';
+    if (pushUpdateBtn) pushUpdateBtn.style.display = 'none';
+    if (saveLocalBtn) saveLocalBtn.style.display = 'inline-block';
+    if (refreshBtn) refreshBtn.style.display = 'none';
+
+    // Populate local product fields
+    document.getElementById('shopify-collection-code').value = product.collection_code || '';
+    document.getElementById('shopify-type-code-select').value = product.type_code || '';
+    document.getElementById('shopify-product-code').value = product.product_code || '';
+    document.getElementById('shopify-series-number').value = product.series_number || '';
+    document.getElementById('shopify-variant-number').value = product.variant_number || 1;
+    document.getElementById('shopify-product-title').value = product.title || '';
+    document.getElementById('shopify-product-description').value = product.description || '';
+    document.getElementById('shopify-product-price').value = product.price || '';
+    document.getElementById('shopify-licensor').value = product.licensor_collection || '';
+
+    document.getElementById('shopify-needs-measurement').checked = !!product.needs_measurement_review;
+    document.getElementById('shopify-needs-pricing').checked = !!product.needs_pricing_review;
+    document.getElementById('shopify-needs-photography').checked = !!product.needs_final_photography;
+    document.getElementById('shopify-not-approved').checked = !!product.not_approved_for_publishing;
+
+    window.updateShopifySkuPreview();
+  }
+
+  // Update push status badge
+  const statusEl = document.getElementById('shopify-editor-push-status');
+  if (statusEl) {
+    if (isLinked) {
+      statusEl.textContent = 'Linked';
+      statusEl.className = 'shopify-push-badge shopify-push-draft';
+    } else if (product.push_status === 'draft') {
+      statusEl.textContent = 'Draft';
+      statusEl.className = 'shopify-push-badge shopify-push-draft';
+    } else {
+      statusEl.textContent = 'New';
+      statusEl.className = 'shopify-push-badge';
+    }
+  }
+};
+
+/**
+ * Refresh live Shopify data for a linked product.
+ */
+window.refreshLiveShopifyData = async function refreshLiveShopifyData() {
+  const productId = window._shopifyEditorContext.existingProductId;
+  if (!productId) {
+    console.log('[Shopify] No existing product ID for live data refresh');
+    return;
+  }
+
+  const statusEl = document.getElementById('shopify-editor-status');
+  if (statusEl) statusEl.textContent = 'Fetching from Shopify...';
+
+  try {
+    const result = await window.electron.fetchLiveShopifyData(productId);
+    const shopify = result.shopifyData;
+
+    // Populate live fields
+    document.getElementById('shopify-live-title').value = shopify.title || '';
+    updateDescriptionPreview('live', shopify.descriptionHtml || '');
+    document.getElementById('shopify-live-vendor').value = shopify.vendor || '';
+
+    // Populate tags (array to comma-separated string)
+    const tagsInput = document.getElementById('shopify-live-tags');
+    if (tagsInput) {
+      tagsInput.value = Array.isArray(shopify.tags) ? shopify.tags.join(', ') : (shopify.tags || '');
+    }
+
+    // Populate SEO fields
+    const seoTitleInput = document.getElementById('shopify-live-seo-title');
+    const seoDescInput = document.getElementById('shopify-live-seo-description');
+    if (seoTitleInput) {
+      seoTitleInput.value = shopify.seo?.title || '';
+      updateCharCount(seoTitleInput, 'seo-title-count', 70);
+    }
+    if (seoDescInput) {
+      seoDescInput.value = shopify.seo?.description || '';
+      updateCharCount(seoDescInput, 'seo-desc-count', 160);
+    }
+
+    // Store shopify data in context for updates
+    window._shopifyEditorContext.shopifyData = shopify;
+    window._shopifyEditorContext.localProduct = result.localProduct;
+
+    // Update Shopify status badge
+    const shopifyStatusEl = document.getElementById('shopify-editor-shopify-status');
+    if (shopifyStatusEl) {
+      shopifyStatusEl.className = 'shopify-push-badge';
+      if (shopify.status === 'DRAFT') {
+        shopifyStatusEl.textContent = 'Shopify: Draft';
+        shopifyStatusEl.classList.add('shopify-status-draft');
+      } else if (shopify.status === 'ACTIVE') {
+        shopifyStatusEl.textContent = 'Shopify: Active';
+        shopifyStatusEl.classList.add('shopify-status-active');
+      } else {
+        shopifyStatusEl.textContent = `Shopify: ${shopify.status}`;
+      }
+      shopifyStatusEl.classList.remove('shopify-status-hidden');
+    }
+
+    // Render variants table
+    renderShopifyVariantsTable(shopify.variants || []);
+
+    // Render photos for linked products
+    if (shopify.media && shopify.media.length > 0) {
+      // Store baseline for diff comparison (deep copy to prevent mutation)
+      window._shopifyEditorContext.photoBaseline = JSON.parse(JSON.stringify(shopify.media));
+      window._shopifyEditorContext.photosModified = false;
+
+      // Convert Shopify media to photo format for the grid
+      window._shopifyEditorContext.photos = shopify.media.map(m => ({
+        filename: extractFilenameFromUrl(m.url) || `image-${m.id.split('/').pop()}`,
+        path: m.url, // Use URL as path for linked products
+        shopifyMediaId: m.id,
+        isShopifyImage: true,
+        alt: m.alt || m.altText || ''
+      }));
+
+      await window.renderShopifyPhotoGrid();
+    } else {
+      // No Shopify images - allow adding from local folder
+      window._shopifyEditorContext.photoBaseline = [];
+      window._shopifyEditorContext.photosModified = false;
+      window._shopifyEditorContext.photos = [];
+      await window.renderShopifyPhotoGrid();
+    }
+
+    // Show last refresh time
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (statusEl) statusEl.textContent = `Last refreshed: ${timeStr}`;
+  } catch (e) {
+    console.error('Error fetching live Shopify data:', e);
+    if (statusEl) statusEl.textContent = `Error: ${e.message}`;
+  }
+};
+
+/**
+ * Extract filename from a Shopify CDN URL.
+ */
+function extractFilenameFromUrl(url) {
+  if (!url) return null;
+  try {
+    const urlObj = new URL(url);
+    const pathname = urlObj.pathname;
+    // Shopify URLs often have format like /v1/files/... or /products/...
+    const parts = pathname.split('/');
+    const lastPart = parts[parts.length - 1];
+    // Remove query params from filename
+    return lastPart.split('?')[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Render the variants table from Shopify data.
+ */
+function renderShopifyVariantsTable(variants) {
+  const container = document.getElementById('shopify-variants-table');
+  const countEl = document.getElementById('shopify-variant-count');
+  if (!container) return;
+
+  // Update variant count
+  if (countEl) {
+    countEl.textContent = variants?.length ? `(${variants.length})` : '';
+  }
+
+  if (!variants || variants.length === 0) {
+    container.innerHTML = '<div class="shopify-variant-empty">No variants found</div>';
+    return;
+  }
+
+  // Header row
+  let html = `
+    <div class="shopify-variant-row header">
+      <div>Variant</div>
+      <div>SKU</div>
+      <div>Price</div>
+      <div title="Inventory - syncs to Shopify on push">Stock</div>
+    </div>
+  `;
+
+  // Variant rows
+  variants.forEach((v, idx) => {
+    const optionDisplay = v.optionValue || v.title || 'Default';
+    const inventory = v.inventoryQuantity ?? '';
+    html += `
+      <div class="shopify-variant-row" data-variant-id="${v.id}" data-index="${idx}">
+        <div class="shopify-variant-option" title="${escapeHtml(optionDisplay)}">${escapeHtml(optionDisplay)}</div>
+        <div class="shopify-variant-sku">
+          <input type="text" value="${escapeHtml(v.sku || '')}" data-field="sku" placeholder="SKU">
+        </div>
+        <div class="shopify-variant-price">
+          <input type="number" step="0.01" min="0" value="${v.price || ''}" data-field="price" placeholder="0.00">
+        </div>
+        <div class="shopify-variant-inventory" title="Inventory quantity - syncs to Shopify on push">
+          <input type="number" min="0" value="${inventory}" data-field="inventoryQuantity" placeholder="0" data-original="${inventory}">
+        </div>
+      </div>
+    `;
+  });
+
+  container.innerHTML = html;
+}
+
+/**
+ * Initialize description toggle buttons for preview/HTML switching.
+ */
+function initShopifyDescriptionToggles() {
+  // Initialize toggle buttons (Editor/HTML)
+  document.querySelectorAll('.desc-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.mode;
+      const target = btn.dataset.target;
+
+      // Update active state on buttons
+      const toggleContainer = btn.parentElement;
+      toggleContainer.querySelectorAll('.desc-toggle-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      // Get elements
+      const fieldContainer = btn.closest('.shopify-description-field');
+      const toolbarId = target === 'live' ? 'shopify-live-description-toolbar' : 'shopify-product-description-toolbar';
+      const editorId = target === 'live' ? 'shopify-live-description-editor' : 'shopify-product-description-editor';
+      const textareaId = target === 'live' ? 'shopify-live-description' : 'shopify-product-description';
+      const toolbarEl = document.getElementById(toolbarId);
+      const editorEl = document.getElementById(editorId);
+      const textareaEl = document.getElementById(textareaId);
+
+      if (mode === 'editor') {
+        // Switch to editor mode
+        if (toolbarEl) toolbarEl.style.display = 'flex';
+        if (editorEl) {
+          editorEl.style.display = 'block';
+          // Sync HTML content to editor
+          editorEl.innerHTML = textareaEl?.value || '';
+        }
+        if (textareaEl) textareaEl.style.display = 'none';
+        if (fieldContainer) fieldContainer.classList.remove('html-mode');
+      } else {
+        // Switch to HTML mode
+        if (toolbarEl) toolbarEl.style.display = 'none';
+        if (editorEl) {
+          // Sync editor content to textarea before hiding
+          if (textareaEl) textareaEl.value = editorEl.innerHTML || '';
+          editorEl.style.display = 'none';
+        }
+        if (textareaEl) textareaEl.style.display = 'block';
+        if (fieldContainer) fieldContainer.classList.add('html-mode');
+      }
+    });
+  });
+
+  // Sync editor changes to textarea
+  ['shopify-live-description-editor', 'shopify-product-description-editor'].forEach(id => {
+    const editor = document.getElementById(id);
+    if (editor) {
+      editor.addEventListener('input', () => {
+        const target = editor.dataset.target;
+        const textareaId = target === 'live' ? 'shopify-live-description' : 'shopify-product-description';
+        const textarea = document.getElementById(textareaId);
+        if (textarea) textarea.value = editor.innerHTML || '';
+      });
+
+      // Handle keyboard shortcuts
+      editor.addEventListener('keydown', (e) => {
+        if (e.ctrlKey || e.metaKey) {
+          if (e.key === 'b') {
+            e.preventDefault();
+            document.execCommand('bold', false, null);
+          } else if (e.key === 'i') {
+            e.preventDefault();
+            document.execCommand('italic', false, null);
+          }
+        }
+      });
+    }
+  });
+
+  // Initialize toolbar buttons
+  document.querySelectorAll('.shopify-desc-toolbar button').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const command = btn.dataset.command;
+      const value = btn.dataset.value || null;
+
+      // Find the associated editor
+      const toolbar = btn.closest('.shopify-desc-toolbar');
+      const toolbarId = toolbar.id;
+      const editorId = toolbarId.replace('-toolbar', '-editor');
+      const editor = document.getElementById(editorId);
+
+      // Focus editor before executing command
+      if (editor) editor.focus();
+
+      // Execute the formatting command
+      if (command === 'formatBlock') {
+        document.execCommand(command, false, `<${value}>`);
+      } else {
+        document.execCommand(command, false, value);
+      }
+
+      // Sync to textarea
+      if (editor) {
+        const target = editor.dataset.target;
+        const textareaId = target === 'live' ? 'shopify-live-description' : 'shopify-product-description';
+        const textarea = document.getElementById(textareaId);
+        if (textarea) textarea.value = editor.innerHTML || '';
+      }
+    });
+  });
+}
+
+/**
+ * Update description content in both editor and textarea.
+ */
+function updateDescriptionPreview(target, htmlContent) {
+  const editorId = target === 'live' ? 'shopify-live-description-editor' : 'shopify-product-description-editor';
+  const textareaId = target === 'live' ? 'shopify-live-description' : 'shopify-product-description';
+  const editorEl = document.getElementById(editorId);
+  const textareaEl = document.getElementById(textareaId);
+
+  if (textareaEl) textareaEl.value = htmlContent || '';
+  if (editorEl) editorEl.innerHTML = htmlContent || '';
+}
+
+// ============================================================================
+// Searchable Select Component
+// ============================================================================
+
+/**
+ * Convert a regular <select> element into a searchable dropdown.
+ * @param {HTMLSelectElement|string} selectEl - The select element or its ID
+ * @param {Object} options - Configuration options
+ * @param {boolean} options.compact - Use compact styling
+ * @param {string} options.placeholder - Search input placeholder
+ * @param {Function} options.onSelect - Callback when an option is selected
+ * @param {Function} options.getSubtitle - Function to get subtitle for an option (receives option element)
+ * @returns {Object} Controller object with methods: refresh(), destroy(), getValue(), setValue()
+ */
+function createSearchableSelect(selectEl, options = {}) {
+  const select = typeof selectEl === 'string' ? document.getElementById(selectEl) : selectEl;
+  if (!select || select.tagName !== 'SELECT') {
+    console.warn('createSearchableSelect: Invalid select element', selectEl);
+    return null;
+  }
+
+  // Check if already initialized
+  if (select.dataset.searchableInitialized === 'true') {
+    return select._searchableController;
+  }
+
+  const {
+    compact = false,
+    placeholder = 'Type to search...',
+    onSelect = null,
+    getSubtitle = null
+  } = options;
+
+  // Create wrapper
+  const wrapper = document.createElement('div');
+  wrapper.className = 'searchable-select-wrapper' + (compact ? ' compact' : '');
+
+  // Create trigger button
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'search-trigger';
+
+  // Create dropdown
+  const dropdown = document.createElement('div');
+  dropdown.className = 'searchable-select-dropdown';
+
+  // Create search input wrapper
+  const searchWrapper = document.createElement('div');
+  searchWrapper.className = 'search-input-wrapper';
+
+  const searchInput = document.createElement('input');
+  searchInput.type = 'text';
+  searchInput.className = 'search-input';
+  searchInput.placeholder = placeholder;
+  searchWrapper.appendChild(searchInput);
+
+  // Create options container
+  const optionsContainer = document.createElement('div');
+  optionsContainer.className = 'searchable-select-options';
+
+  // Create no results message
+  const noResults = document.createElement('div');
+  noResults.className = 'searchable-select-no-results';
+  noResults.textContent = 'No matches found';
+  noResults.style.display = 'none';
+
+  dropdown.appendChild(searchWrapper);
+  dropdown.appendChild(optionsContainer);
+  dropdown.appendChild(noResults);
+
+  // Insert wrapper and move select inside (hidden)
+  select.parentNode.insertBefore(wrapper, select);
+  wrapper.appendChild(trigger);
+  wrapper.appendChild(dropdown);
+  wrapper.appendChild(select);
+  select.style.display = 'none';
+  select.dataset.searchableInitialized = 'true';
+
+  let highlightedIndex = -1;
+  let optionElements = [];
+
+  // Update trigger text based on current selection
+  function updateTriggerText() {
+    const selectedOption = select.options[select.selectedIndex];
+    trigger.textContent = selectedOption ? selectedOption.textContent : '';
+  }
+
+  // Build options from select
+  function buildOptions() {
+    optionsContainer.innerHTML = '';
+    optionElements = [];
+    highlightedIndex = -1;
+
+    Array.from(select.options).forEach((option, index) => {
+      const optEl = document.createElement('div');
+      optEl.className = 'searchable-select-option';
+      optEl.dataset.value = option.value;
+      optEl.dataset.index = index;
+
+      const titleSpan = document.createElement('span');
+      titleSpan.className = 'option-title';
+      titleSpan.textContent = option.textContent;
+      optEl.appendChild(titleSpan);
+
+      // Add subtitle if provided
+      if (getSubtitle) {
+        const subtitle = getSubtitle(option);
+        if (subtitle) {
+          const subtitleSpan = document.createElement('span');
+          subtitleSpan.className = 'option-subtitle';
+          subtitleSpan.textContent = subtitle;
+          optEl.appendChild(subtitleSpan);
+        }
+      }
+
+      if (option.selected) {
+        optEl.classList.add('selected');
+      }
+
+      optEl.addEventListener('click', () => {
+        selectOption(index);
+      });
+
+      optEl.addEventListener('mouseenter', () => {
+        setHighlight(optionElements.indexOf(optEl));
+      });
+
+      optionsContainer.appendChild(optEl);
+      optionElements.push(optEl);
+    });
+
+    updateTriggerText();
+  }
+
+  // Filter options based on search
+  function filterOptions(query) {
+    const lowerQuery = query.toLowerCase().trim();
+    let visibleCount = 0;
+    highlightedIndex = -1;
+
+    optionElements.forEach((optEl, idx) => {
+      const text = optEl.textContent.toLowerCase();
+      const matches = !lowerQuery || text.includes(lowerQuery);
+      optEl.classList.toggle('hidden', !matches);
+      optEl.classList.remove('highlighted');
+      if (matches) {
+        visibleCount++;
+        if (highlightedIndex === -1) {
+          highlightedIndex = idx;
+          optEl.classList.add('highlighted');
+        }
+      }
+    });
+
+    noResults.style.display = visibleCount === 0 ? 'block' : 'none';
+  }
+
+  // Set highlight on option
+  function setHighlight(index) {
+    optionElements.forEach((el, i) => {
+      el.classList.toggle('highlighted', i === index && !el.classList.contains('hidden'));
+    });
+    highlightedIndex = index;
+
+    // Scroll into view
+    if (optionElements[index] && !optionElements[index].classList.contains('hidden')) {
+      optionElements[index].scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  // Move highlight up/down
+  function moveHighlight(direction) {
+    const visibleOptions = optionElements.filter(el => !el.classList.contains('hidden'));
+    if (visibleOptions.length === 0) return;
+
+    const currentHighlighted = optionElements[highlightedIndex];
+    const currentVisibleIndex = visibleOptions.indexOf(currentHighlighted);
+    let newVisibleIndex = currentVisibleIndex + direction;
+
+    if (newVisibleIndex < 0) newVisibleIndex = visibleOptions.length - 1;
+    if (newVisibleIndex >= visibleOptions.length) newVisibleIndex = 0;
+
+    const newElement = visibleOptions[newVisibleIndex];
+    const newIndex = optionElements.indexOf(newElement);
+    setHighlight(newIndex);
+  }
+
+  // Select an option by index
+  function selectOption(index) {
+    select.selectedIndex = index;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+
+    optionElements.forEach((el, i) => {
+      el.classList.toggle('selected', i === index);
+    });
+
+    updateTriggerText();
+    closeDropdown();
+
+    if (onSelect) {
+      onSelect(select.value, select.options[index]);
+    }
+  }
+
+  // Open dropdown
+  function openDropdown() {
+    wrapper.classList.add('open');
+    searchInput.value = '';
+    filterOptions('');
+    searchInput.focus();
+
+    // Highlight current selection
+    const selectedIndex = select.selectedIndex;
+    if (selectedIndex >= 0) {
+      setHighlight(selectedIndex);
+      setTimeout(() => {
+        if (optionElements[selectedIndex]) {
+          optionElements[selectedIndex].scrollIntoView({ block: 'center' });
+        }
+      }, 0);
+    }
+  }
+
+  // Close dropdown
+  function closeDropdown() {
+    wrapper.classList.remove('open');
+    searchInput.value = '';
+  }
+
+  // Event listeners
+  trigger.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (wrapper.classList.contains('open')) {
+      closeDropdown();
+    } else {
+      openDropdown();
+    }
+  });
+
+  searchInput.addEventListener('input', () => {
+    filterOptions(searchInput.value);
+  });
+
+  searchInput.addEventListener('keydown', (e) => {
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        moveHighlight(1);
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        moveHighlight(-1);
+        break;
+      case 'Enter':
+        e.preventDefault();
+        if (highlightedIndex >= 0 && !optionElements[highlightedIndex]?.classList.contains('hidden')) {
+          selectOption(highlightedIndex);
+        }
+        break;
+      case 'Escape':
+        e.preventDefault();
+        closeDropdown();
+        break;
+    }
+  });
+
+  // Close on click outside
+  document.addEventListener('click', (e) => {
+    if (!wrapper.contains(e.target)) {
+      closeDropdown();
+    }
+  });
+
+  // Build initial options
+  buildOptions();
+
+  // Controller object
+  const controller = {
+    refresh: buildOptions,
+    destroy: () => {
+      select.style.display = '';
+      delete select.dataset.searchableInitialized;
+      delete select._searchableController;
+      wrapper.parentNode.insertBefore(select, wrapper);
+      wrapper.remove();
+    },
+    getValue: () => select.value,
+    setValue: (value) => {
+      select.value = value;
+      buildOptions();
+    },
+    open: openDropdown,
+    close: closeDropdown
+  };
+
+  select._searchableController = controller;
+  return controller;
+}
+
+/**
+ * Initialize searchable selects on multiple elements.
+ * @param {string} selector - CSS selector for select elements
+ * @param {Object} options - Options passed to createSearchableSelect
+ */
+function initSearchableSelects(selector, options = {}) {
+  document.querySelectorAll(selector).forEach(select => {
+    createSearchableSelect(select, options);
+  });
+}
+
+/**
+ * Update character count display for SEO fields.
+ */
+function updateCharCount(input, countElId, maxLength) {
+  const countEl = document.getElementById(countElId);
+  if (countEl && input) {
+    const len = (input.value || '').length;
+    countEl.textContent = `${len}/${maxLength}`;
+    countEl.style.color = len > maxLength ? '#ff6b6b' : '';
+  }
+}
+
+// Set up SEO character count listeners when dialog opens
+function initShopifySeoCounters() {
+  const fields = [
+    { input: 'shopify-live-seo-title', count: 'seo-title-count', max: 70 },
+    { input: 'shopify-live-seo-description', count: 'seo-desc-count', max: 160 },
+    { input: 'shopify-seo-title', count: 'new-seo-title-count', max: 70 },
+    { input: 'shopify-seo-description', count: 'new-seo-desc-count', max: 160 }
+  ];
+
+  fields.forEach(({ input, count, max }) => {
+    const inputEl = document.getElementById(input);
+    if (inputEl) {
+      inputEl.addEventListener('input', () => updateCharCount(inputEl, count, max));
+      updateCharCount(inputEl, count, max);
+    }
+  });
+}
+
+/**
+ * Open the model file with the OS default application.
+ */
+window.openModelInSlicer = async function openModelInSlicer() {
+  const modelPath = window._shopifyEditorContext.modelPath;
+  if (!modelPath) {
+    alert('No model path available.');
+    return;
+  }
+
+  try {
+    await window.electron.openPath(modelPath);
+  } catch (e) {
+    console.error('Error opening model:', e);
+    alert(`Failed to open model: ${e.message}`);
+  }
+};
+
+/**
+ * Push updates to a linked Shopify product.
+ */
+window.pushLinkedShopifyUpdate = async function pushLinkedShopifyUpdate() {
+  const productId = window._shopifyEditorContext.existingProductId;
+  if (!productId) {
+    alert('No linked product to update.');
+    return;
+  }
+
+  const statusEl = document.getElementById('shopify-editor-status');
+  if (statusEl) statusEl.textContent = 'Pushing to Shopify...';
+
+  try {
+    // Gather updated data from form
+    const tagsValue = document.getElementById('shopify-live-tags')?.value || '';
+    const tags = tagsValue.split(',').map(t => t.trim()).filter(t => t);
+
+    const updates = {
+      title: document.getElementById('shopify-live-title').value,
+      description: document.getElementById('shopify-live-description').value,
+      vendor: document.getElementById('shopify-live-vendor').value,
+      tags: tags,
+      seo: {
+        title: document.getElementById('shopify-live-seo-title')?.value || null,
+        description: document.getElementById('shopify-live-seo-description')?.value || null
+      },
+      variants: []
+    };
+
+    // Gather variant updates (price, SKU)
+    // Inventory is tracked separately for inventorySetQuantities
+    const inventoryUpdates = [];
+    const variantRows = document.querySelectorAll('#shopify-variants-table .shopify-variant-row:not(.header)');
+    variantRows.forEach((row) => {
+      const variantId = row.dataset.variantId;
+      const priceInput = row.querySelector('input[data-field="price"]');
+      const skuInput = row.querySelector('input[data-field="sku"]');
+      const inventoryInput = row.querySelector('input[data-field="inventoryQuantity"]');
+      if (variantId) {
+        updates.variants.push({
+          id: variantId,
+          price: priceInput?.value ? parseFloat(priceInput.value) : null,
+          sku: skuInput?.value || null
+        });
+
+        // Track inventory changes (only if actually changed)
+        if (inventoryInput) {
+          const currentValue = parseInt(inventoryInput.value, 10);
+          const originalValue = parseInt(inventoryInput.dataset.original, 10);
+          if (!isNaN(currentValue) && currentValue !== originalValue) {
+            inventoryUpdates.push({
+              variantId: variantId,
+              quantity: currentValue
+            });
+          }
+        }
+      }
+    });
+
+    // Push product/variant updates
+    await window.electron.updateLinkedShopifyProduct(productId, updates);
+
+    // Push inventory updates if any quantities changed
+    if (inventoryUpdates.length > 0) {
+      if (statusEl) statusEl.textContent = 'Updating inventory...';
+      console.log('[Shopify] Pushing inventory updates:', inventoryUpdates);
+      await window.electron.setShopifyInventory(inventoryUpdates);
+    }
+
+    // Compute photo diff - only push media changes if user actually modified them
+    const photoDiff = window.computePhotoDiff();
+    if (photoDiff.hasChanges) {
+      const shopifyProductId = window._shopifyEditorContext.shopifyData?.id;
+      if (shopifyProductId) {
+        if (statusEl) statusEl.textContent = 'Updating photos...';
+
+        // Delete removed photos
+        if (photoDiff.removed.length > 0) {
+          console.log('[Shopify] Deleting photos:', photoDiff.removed);
+          await window.electron.deleteShopifyProductMedia(shopifyProductId, photoDiff.removed);
+        }
+
+        // Upload new photos
+        if (photoDiff.added.length > 0) {
+          console.log('[Shopify] Uploading new photos:', photoDiff.added.map(p => p.filename));
+          // Read image data and upload
+          const imagesToUpload = [];
+          for (const photo of photoDiff.added) {
+            if (!photo.isShopifyImage && photo.path) {
+              imagesToUpload.push({
+                path: photo.path,
+                filename: photo.filename,
+                alt: photo.alt || ''
+              });
+            }
+          }
+          if (imagesToUpload.length > 0) {
+            await window.electron.uploadShopifyProductImages(shopifyProductId, imagesToUpload);
+          }
+        }
+
+        // Reorder if needed (only reorder existing Shopify images, not new ones)
+        if (photoDiff.reordered && photoDiff.currentOrder.length > 1) {
+          console.log('[Shopify] Reordering photos:', photoDiff.currentOrder);
+          const moves = photoDiff.currentOrder.map((id, idx) => ({
+            id,
+            newPosition: String(idx)
+          }));
+          await window.electron.reorderShopifyProductMedia(shopifyProductId, moves);
+        }
+      }
+    }
+
+    if (statusEl) statusEl.textContent = 'Successfully pushed to Shopify!';
+    setTimeout(() => {
+      if (statusEl) statusEl.textContent = '';
+    }, 3000);
+
+    // Refresh to show updated data (resets baseline for photos)
+    await window.refreshLiveShopifyData();
+  } catch (e) {
+    console.error('Error pushing to Shopify:', e);
+    if (statusEl) statusEl.textContent = `Error: ${e.message}`;
+  }
+};
+
+/**
+ * Reset the editor for a new product.
+ */
+window.resetShopifyEditorForNewProduct = async function resetShopifyEditorForNewProduct(modelName, modelFolder) {
+  // Show new product fields, hide linked section
+  const linkedSection = document.getElementById('shopify-linked-section');
+  const skuSection = document.getElementById('shopify-sku-section');
+  const newProductFields = document.getElementById('shopify-new-product-fields');
+  const newVariantsSection = document.getElementById('shopify-new-variants-section');
+  const photosSection = document.getElementById('shopify-photos-section');
+  const pushDraftBtn = document.getElementById('shopify-push-draft');
+  const pushUpdateBtn = document.getElementById('shopify-push-update');
+  const saveLocalBtn = document.getElementById('shopify-save-local');
+  const refreshBtn = document.getElementById('shopify-refresh-live');
+  const shopifyStatusEl = document.getElementById('shopify-editor-shopify-status');
+
+  if (linkedSection) linkedSection.style.display = 'none';
+  if (skuSection) skuSection.style.display = 'block';
+  if (newProductFields) newProductFields.style.display = 'block';
+  if (newVariantsSection) newVariantsSection.style.display = 'block';
+  if (photosSection) photosSection.style.display = 'block';
+  if (pushDraftBtn) pushDraftBtn.style.display = 'inline-block';
+  if (pushUpdateBtn) pushUpdateBtn.style.display = 'none';
+  if (saveLocalBtn) saveLocalBtn.style.display = 'inline-block';
+  if (refreshBtn) refreshBtn.style.display = 'none';
+  if (shopifyStatusEl) shopifyStatusEl.classList.add('shopify-status-hidden');
+
+  // Update model path display
+  const modelPathEl = document.getElementById('shopify-model-path');
+  if (modelPathEl && window._shopifyEditorContext.modelPath) {
+    const fileName = window._shopifyEditorContext.modelPath.split(/[\\\/]/).pop() || '';
+    modelPathEl.textContent = fileName;
+    modelPathEl.title = window._shopifyEditorContext.modelPath;
+  }
+
+  // Clear fields
+  document.getElementById('shopify-collection-code').value = '';
+  document.getElementById('shopify-type-code-select').value = '';
+  document.getElementById('shopify-product-code').value = '';
+  document.getElementById('shopify-series-number').value = '';
+  document.getElementById('shopify-variant-number').value = '1';
+  document.getElementById('shopify-product-title').value = modelName || '';
+  document.getElementById('shopify-product-description').value = '';
+  document.getElementById('shopify-product-price').value = '';
+  document.getElementById('shopify-licensor').value = '';
+
+  // Default flags to checked (needs review)
+  document.getElementById('shopify-needs-measurement').checked = true;
+  document.getElementById('shopify-needs-pricing').checked = true;
+  document.getElementById('shopify-needs-photography').checked = true;
+  document.getElementById('shopify-not-approved').checked = true;
+
+  // Clear context
+  window._shopifyEditorContext.shopifyData = null;
+  window._shopifyEditorContext.localProduct = null;
+
+  // Try to suggest collection code from folder
+  if (modelFolder) {
+    const folderName = modelFolder.split(/[\\\/]/).pop() || '';
+    if (folderName) {
+      try {
+        const suggestion = await window.electron.suggestShopifyCollectionCode(folderName);
+        // Don't auto-fill - user should confirm
+      } catch (e) {
+        console.error('Error suggesting collection code:', e);
+      }
+    }
+  }
+
+  // Generate product code from model name
+  if (modelName) {
+    try {
+      const result = await window.electron.generateProductCode(modelName);
+      document.getElementById('shopify-product-code').value = result.code || '';
+    } catch (e) {
+      console.error('Error generating product code:', e);
+    }
+  }
+
+  // Reset status
+  const statusEl = document.getElementById('shopify-editor-push-status');
+  if (statusEl) {
+    statusEl.textContent = 'Not pushed';
+    statusEl.className = 'shopify-push-badge';
+  }
+
+  // Reset variants table to single default variant
+  window.resetNewProductVariants();
+
+  // Clear description editor
+  const descEditor = document.getElementById('shopify-product-description-editor');
+  if (descEditor) descEditor.innerHTML = '';
+
+  window.updateShopifySkuPreview();
+};
+
+/**
+ * Update the SKU preview based on current field values.
+ * Also updates all variant SKU previews in the new product variants table.
+ */
+window.updateShopifySkuPreview = function updateShopifySkuPreview() {
+  const collection = document.getElementById('shopify-collection-code')?.value || '???';
+  const type = document.getElementById('shopify-type-code-select')?.value || '???';
+  const product = document.getElementById('shopify-product-code')?.value || '??????';
+  const series = document.getElementById('shopify-series-number')?.value || '000';
+  const productCode = product.toUpperCase().padEnd(6, '?').substring(0, 6);
+  const seriesStr = String(series).padStart(3, '0');
+
+  // Update main SKU preview (first variant)
+  const sku = `GR-${collection}-${type}-${productCode}-${seriesStr}-01`;
+  const previewEl = document.getElementById('shopify-sku-preview');
+  if (previewEl) {
+    previewEl.textContent = sku;
+  }
+
+  // Update all variant SKU previews
+  const variantRows = document.querySelectorAll('#shopify-new-variants-table .new-variant-row');
+  variantRows.forEach((row, idx) => {
+    const variantNum = String(idx + 1).padStart(2, '0');
+    const variantSku = `GR-${collection}-${type}-${productCode}-${seriesStr}-${variantNum}`;
+    const skuPreview = row.querySelector('.shopify-variant-sku-preview code');
+    if (skuPreview) skuPreview.textContent = variantSku;
+  });
+
+  // Update variant count display
+  const countEl = document.getElementById('shopify-new-variant-count');
+  if (countEl) {
+    countEl.textContent = `(${variantRows.length} variant${variantRows.length !== 1 ? 's' : ''})`;
+  }
+};
+
+// Alias for backwards compatibility
+window.updateSkuPreview = window.updateShopifySkuPreview;
+
+/**
+ * Add a new variant row to the new product form.
+ */
+window.addNewProductVariant = function addNewProductVariant() {
+  const table = document.getElementById('shopify-new-variants-table');
+  if (!table) return;
+
+  const existingRows = table.querySelectorAll('.new-variant-row');
+  const newIndex = existingRows.length;
+
+  const newRow = document.createElement('div');
+  newRow.className = 'shopify-variant-row new-variant-row';
+  newRow.dataset.variantIndex = newIndex;
+  newRow.innerHTML = `
+    <div class="shopify-variant-option">
+      <input type="text" data-field="optionValue" value="" placeholder="e.g. Matte Black">
+    </div>
+    <div class="shopify-variant-price">
+      <input type="number" step="0.01" min="0" data-field="price" placeholder="0.00">
+    </div>
+    <div class="shopify-variant-inventory">
+      <input type="number" min="0" data-field="stock" value="0" placeholder="0">
+    </div>
+    <div class="shopify-variant-sku-preview">
+      <code>GR-???-???-???-000-${String(newIndex + 1).padStart(2, '0')}</code>
+    </div>
+    <div class="shopify-variant-actions">
+      <button type="button" class="shopify-remove-variant-btn" onclick="window.removeNewProductVariant(${newIndex})" title="Remove variant">×</button>
+    </div>
+  `;
+
+  table.appendChild(newRow);
+
+  // Enable all remove buttons (since we now have more than 1 variant)
+  updateVariantRemoveButtons();
+
+  // Update SKU previews
+  window.updateShopifySkuPreview();
+
+  // Focus the new option value input
+  const optionInput = newRow.querySelector('input[data-field="optionValue"]');
+  if (optionInput) optionInput.focus();
+};
+
+/**
+ * Remove a variant row from the new product form.
+ */
+window.removeNewProductVariant = function removeNewProductVariant(index) {
+  const table = document.getElementById('shopify-new-variants-table');
+  if (!table) return;
+
+  const rows = table.querySelectorAll('.new-variant-row');
+  if (rows.length <= 1) return; // Don't remove the last variant
+
+  // Find and remove the row at the specified index
+  rows.forEach((row, idx) => {
+    if (parseInt(row.dataset.variantIndex, 10) === index) {
+      row.remove();
+    }
+  });
+
+  // Re-index remaining rows and update their onclick handlers
+  const remainingRows = table.querySelectorAll('.new-variant-row');
+  remainingRows.forEach((row, idx) => {
+    row.dataset.variantIndex = idx;
+    const removeBtn = row.querySelector('.shopify-remove-variant-btn');
+    if (removeBtn) {
+      removeBtn.onclick = () => window.removeNewProductVariant(idx);
+    }
+  });
+
+  // Update remove button states
+  updateVariantRemoveButtons();
+
+  // Update SKU previews
+  window.updateShopifySkuPreview();
+};
+
+/**
+ * Update the disabled state of variant remove buttons.
+ * The last remaining variant cannot be removed.
+ */
+function updateVariantRemoveButtons() {
+  const rows = document.querySelectorAll('#shopify-new-variants-table .new-variant-row');
+  const removeButtons = document.querySelectorAll('#shopify-new-variants-table .shopify-remove-variant-btn');
+
+  removeButtons.forEach(btn => {
+    btn.disabled = rows.length <= 1;
+  });
+}
+
+/**
+ * Get all variant data from the new product form.
+ */
+window.getNewProductVariants = function getNewProductVariants() {
+  const rows = document.querySelectorAll('#shopify-new-variants-table .new-variant-row');
+  const variants = [];
+
+  rows.forEach((row, idx) => {
+    const optionValue = row.querySelector('input[data-field="optionValue"]')?.value || 'Default';
+    const price = row.querySelector('input[data-field="price"]')?.value || '0';
+    const stock = row.querySelector('input[data-field="stock"]')?.value || '0';
+    const skuCode = row.querySelector('.shopify-variant-sku-preview code')?.textContent || '';
+
+    variants.push({
+      optionValue,
+      price: parseFloat(price) || 0,
+      stock: parseInt(stock, 10) || 0,
+      sku: skuCode,
+      variantNumber: idx + 1
+    });
+  });
+
+  return variants;
+};
+
+/**
+ * Reset the variants table to a single default variant.
+ */
+window.resetNewProductVariants = function resetNewProductVariants() {
+  const table = document.getElementById('shopify-new-variants-table');
+  if (!table) return;
+
+  // Remove all rows except the header
+  const rows = table.querySelectorAll('.new-variant-row');
+  rows.forEach(row => row.remove());
+
+  // Add a single default variant
+  const defaultRow = document.createElement('div');
+  defaultRow.className = 'shopify-variant-row new-variant-row';
+  defaultRow.dataset.variantIndex = '0';
+  defaultRow.innerHTML = `
+    <div class="shopify-variant-option">
+      <input type="text" data-field="optionValue" value="Default" placeholder="e.g. Matte Black">
+    </div>
+    <div class="shopify-variant-price">
+      <input type="number" step="0.01" min="0" data-field="price" placeholder="0.00">
+    </div>
+    <div class="shopify-variant-inventory">
+      <input type="number" min="0" data-field="stock" value="0" placeholder="0">
+    </div>
+    <div class="shopify-variant-sku-preview">
+      <code>GR-???-???-???-000-01</code>
+    </div>
+    <div class="shopify-variant-actions">
+      <button type="button" class="shopify-remove-variant-btn" onclick="window.removeNewProductVariant(0)" title="Remove variant" disabled>×</button>
+    </div>
+  `;
+  table.appendChild(defaultRow);
+
+  window.updateShopifySkuPreview();
+};
+
+/**
+ * Browse for additional images.
+ */
+window.browseShopifyPhotos = async function browseShopifyPhotos() {
+  try {
+    // Default to model's folder if available
+    const defaultFolder = window._shopifyEditorContext?.modelFolder || null;
+    const selectedImages = await window.electron.browseForImages(defaultFolder);
+    if (!selectedImages || selectedImages.length === 0) return;
+
+    // Add to existing photos
+    const existingFilenames = new Set(window._shopifyEditorContext.photos.map(p => p.filename));
+
+    for (const img of selectedImages) {
+      // Avoid duplicates by filename
+      if (!existingFilenames.has(img.filename)) {
+        window._shopifyEditorContext.photos.push({
+          ...img,
+          isShopifyImage: false // Explicitly mark as local file
+        });
+        existingFilenames.add(img.filename);
+      }
+    }
+
+    // Mark as modified for diff tracking
+    window._shopifyEditorContext.photosModified = true;
+
+    // Re-render the grid
+    await window.renderShopifyPhotoGrid();
+  } catch (e) {
+    console.error('Error browsing for images:', e);
+  }
+};
+
+/**
+ * Initialize photo size controls and load saved preference.
+ */
+window.initPhotoSizeControls = async function initPhotoSizeControls() {
+  const gridEl = document.getElementById('shopify-photo-grid');
+  const sizeButtons = document.querySelectorAll('.photo-size-btn');
+
+  if (!gridEl || sizeButtons.length === 0) return;
+
+  // Load saved size preference
+  try {
+    const savedSize = await window.electron.getSetting('shopifyPhotoGridSize');
+    if (savedSize && ['small', 'medium', 'large'].includes(savedSize)) {
+      gridEl.dataset.size = savedSize;
+      // Update active button
+      sizeButtons.forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.size === savedSize);
+      });
+    }
+  } catch (e) {
+    console.log('[Shopify] Could not load photo grid size preference');
+  }
+
+  // Add click handlers
+  sizeButtons.forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const newSize = btn.dataset.size;
+      gridEl.dataset.size = newSize;
+
+      // Update active state
+      sizeButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      // Save preference
+      try {
+        await window.electron.saveSetting('shopifyPhotoGridSize', newSize);
+      } catch (e) {
+        console.error('[Shopify] Could not save photo grid size preference:', e);
+      }
+    });
+  });
+};
+
+/**
+ * Render the photo grid from the current photos array.
+ * Handles both local files (path is filesystem path) and Shopify images (path is URL).
+ */
+window.renderShopifyPhotoGrid = async function renderShopifyPhotoGrid() {
+  const gridEl = document.getElementById('shopify-photo-grid');
+  if (!gridEl) return;
+
+  const images = window._shopifyEditorContext.photos;
+
+  if (!images || images.length === 0) {
+    gridEl.innerHTML = '<p class="setting-description">No images selected. Use Browse or Refresh to add photos.</p>';
+    return;
+  }
+
+  // Render photo grid with Shopify indicator for existing images
+  gridEl.innerHTML = images.map((img, idx) => `
+    <div class="shopify-photo-item${img.isShopifyImage ? ' shopify-existing-image' : ''}${idx === 0 ? ' shopify-featured-image' : ''}"
+         data-index="${idx}"
+         data-filename="${img.filename}"
+         data-shopify-media-id="${img.shopifyMediaId || ''}"
+         draggable="true">
+      <img src="" data-path="${img.path}" data-is-url="${img.isShopifyImage ? 'true' : 'false'}" alt="${img.filename}" loading="lazy">
+      <span class="shopify-photo-name">${img.filename}</span>
+      <span class="shopify-photo-order">${idx === 0 ? '★' : idx + 1}</span>
+      ${img.isShopifyImage ? '<span class="shopify-photo-cloud" title="Currently on Shopify">☁️</span>' : ''}
+      <button type="button" class="shopify-photo-remove" onclick="window.removeShopifyPhoto(${idx})" title="Remove">&times;</button>
+    </div>
+  `).join('');
+
+  // Set up drag-and-drop reordering
+  setupShopifyPhotoDragDrop(gridEl);
+
+  // Load thumbnails - handle both URLs and local paths
+  gridEl.querySelectorAll('.shopify-photo-item img').forEach(async (imgEl) => {
+    const imgPath = imgEl.dataset.path;
+    const isUrl = imgEl.dataset.isUrl === 'true';
+
+    try {
+      if (isUrl) {
+        // Shopify image - use URL directly
+        imgEl.src = imgPath;
+      } else {
+        // Local image - load via IPC
+        const base64 = await window.electron.readImageAsBase64(imgPath);
+        if (base64) imgEl.src = base64;
+      }
+    } catch (e) {
+      console.error('Error loading image:', e);
+    }
+  });
+};
+
+/**
+ * Set up drag-and-drop reordering for the photo grid.
+ */
+function setupShopifyPhotoDragDrop(gridEl) {
+  let draggedItem = null;
+  let draggedIndex = -1;
+
+  gridEl.querySelectorAll('.shopify-photo-item').forEach((item) => {
+    item.addEventListener('dragstart', (e) => {
+      draggedItem = item;
+      draggedIndex = parseInt(item.dataset.index);
+      item.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', draggedIndex);
+    });
+
+    item.addEventListener('dragend', () => {
+      if (draggedItem) {
+        draggedItem.classList.remove('dragging');
+      }
+      draggedItem = null;
+      draggedIndex = -1;
+      // Remove all drop indicators
+      gridEl.querySelectorAll('.shopify-photo-item').forEach(el => {
+        el.classList.remove('drag-over', 'drag-over-left', 'drag-over-right');
+      });
+    });
+
+    item.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (!draggedItem || draggedItem === item) return;
+
+      const rect = item.getBoundingClientRect();
+      const midX = rect.left + rect.width / 2;
+      const isLeft = e.clientX < midX;
+
+      // Remove previous indicators
+      gridEl.querySelectorAll('.shopify-photo-item').forEach(el => {
+        el.classList.remove('drag-over-left', 'drag-over-right');
+      });
+
+      item.classList.add(isLeft ? 'drag-over-left' : 'drag-over-right');
+    });
+
+    item.addEventListener('dragleave', () => {
+      item.classList.remove('drag-over', 'drag-over-left', 'drag-over-right');
+    });
+
+    item.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (!draggedItem || draggedItem === item) return;
+
+      const targetIndex = parseInt(item.dataset.index);
+      const rect = item.getBoundingClientRect();
+      const midX = rect.left + rect.width / 2;
+      const insertBefore = e.clientX < midX;
+
+      // Calculate new index
+      let newIndex = insertBefore ? targetIndex : targetIndex + 1;
+      if (draggedIndex < targetIndex) newIndex--;
+
+      // Reorder the photos array
+      const photos = window._shopifyEditorContext.photos;
+      const [movedPhoto] = photos.splice(draggedIndex, 1);
+      photos.splice(newIndex, 0, movedPhoto);
+
+      window._shopifyEditorContext.photosModified = true;
+      window.renderShopifyPhotoGrid();
+    });
+  });
+}
+
+/**
+ * Remove a photo from the list.
+ */
+window.removeShopifyPhoto = function removeShopifyPhoto(index) {
+  window._shopifyEditorContext.photos.splice(index, 1);
+  window._shopifyEditorContext.photosModified = true; // Mark as modified for diff
+  window.renderShopifyPhotoGrid();
+};
+
+/**
+ * Refresh photos from the model folder (replaces current list).
+ * For linked products, this adds local folder images to the existing Shopify images.
+ */
+window.refreshShopifyPhotos = async function refreshShopifyPhotos() {
+  const folder = window._shopifyEditorContext.modelFolder;
+  if (!folder) {
+    // Don't clear Shopify images if we're on a linked product
+    if (!window._shopifyEditorContext.photoBaseline) {
+      window._shopifyEditorContext.photos = [];
+    }
+    await window.renderShopifyPhotoGrid();
+    return;
+  }
+
+  try {
+    const images = await window.electron.getProductFolderImages(folder);
+    const localImages = (images || []).map(img => ({
+      ...img,
+      isShopifyImage: false
+    }));
+
+    // For linked products, we might want to merge or replace
+    // For now, replace with local images (user can use Browse to add specific ones)
+    window._shopifyEditorContext.photos = localImages;
+    window._shopifyEditorContext.photosModified = true; // Mark as modified
+    await window.renderShopifyPhotoGrid();
+  } catch (e) {
+    console.error('Error loading photos:', e);
+    window._shopifyEditorContext.photos = [];
+    await window.renderShopifyPhotoGrid();
+  }
+};
+
+/**
+ * Compute the diff between current photos and baseline.
+ * Returns {added, removed, reordered} arrays for push decisions.
+ */
+window.computePhotoDiff = function computePhotoDiff() {
+  const baseline = window._shopifyEditorContext.photoBaseline || [];
+  const current = window._shopifyEditorContext.photos || [];
+  const modified = window._shopifyEditorContext.photosModified;
+
+  // If not modified, no changes
+  if (!modified) {
+    return { hasChanges: false, added: [], removed: [], reordered: false };
+  }
+
+  // Extract baseline media IDs
+  const baselineIds = new Set(baseline.map(b => b.id));
+  const baselineOrder = baseline.map(b => b.id);
+
+  // Extract current media IDs (only for existing Shopify images)
+  const currentShopifyImages = current.filter(c => c.isShopifyImage && c.shopifyMediaId);
+  const currentIds = new Set(currentShopifyImages.map(c => c.shopifyMediaId));
+  const currentOrder = currentShopifyImages.map(c => c.shopifyMediaId);
+
+  // Find removed (in baseline but not in current)
+  const removed = baseline.filter(b => !currentIds.has(b.id)).map(b => b.id);
+
+  // Find added (local images that need to be uploaded)
+  const added = current.filter(c => !c.isShopifyImage);
+
+  // Check if reordered (same IDs but different order)
+  let reordered = false;
+  if (removed.length === 0 && currentOrder.length === baselineOrder.length) {
+    for (let i = 0; i < currentOrder.length; i++) {
+      if (currentOrder[i] !== baselineOrder[i]) {
+        reordered = true;
+        break;
+      }
+    }
+  }
+
+  return {
+    hasChanges: removed.length > 0 || added.length > 0 || reordered,
+    added,
+    removed,
+    reordered,
+    currentOrder
+  };
+};
+
+/**
+ * Save the Shopify product locally.
+ */
+window.saveShopifyProductLocally = async function saveShopifyProductLocally() {
+  const statusEl = document.getElementById('shopify-editor-status');
+
+  try {
+    const collectionCode = document.getElementById('shopify-collection-code')?.value;
+    const typeCode = document.getElementById('shopify-type-code-select')?.value;
+    const productCode = document.getElementById('shopify-product-code')?.value?.toUpperCase();
+
+    if (!collectionCode || !typeCode || !productCode) {
+      if (statusEl) {
+        statusEl.textContent = 'Please fill in Collection, Type, and Product code.';
+        statusEl.className = 'setting-description warning-text';
+      }
+      return;
+    }
+
+    // Get or allocate series number
+    let seriesNumber = parseInt(document.getElementById('shopify-series-number')?.value, 10);
+    if (!seriesNumber || isNaN(seriesNumber)) {
+      const result = await window.electron.allocateSeriesNumber(collectionCode, typeCode);
+      seriesNumber = result.series;
+      document.getElementById('shopify-series-number').value = seriesNumber;
+    }
+
+    const productData = {
+      id: window._shopifyEditorContext.existingProductId || null,
+      collection_code: collectionCode,
+      type_code: typeCode,
+      product_code: productCode,
+      series_number: seriesNumber,
+      variant_number: parseInt(document.getElementById('shopify-variant-number')?.value, 10) || 1,
+      title: document.getElementById('shopify-product-title')?.value || '',
+      description: document.getElementById('shopify-product-description')?.value || '',
+      price: parseFloat(document.getElementById('shopify-product-price')?.value) || null,
+      licensor_collection: document.getElementById('shopify-licensor')?.value || '',
+      needs_measurement_review: document.getElementById('shopify-needs-measurement')?.checked,
+      needs_pricing_review: document.getElementById('shopify-needs-pricing')?.checked,
+      needs_final_photography: document.getElementById('shopify-needs-photography')?.checked,
+      not_approved_for_publishing: document.getElementById('shopify-not-approved')?.checked,
+      photo_order: window._shopifyEditorContext.photos.map(p => p.filename),
+      source_folder: window._shopifyEditorContext.modelFolder,
+      model_id: window._shopifyEditorContext.modelId
+    };
+
+    const result = await window.electron.saveShopifyProduct(productData);
+    window._shopifyEditorContext.existingProductId = result.id;
+
+    if (statusEl) {
+      statusEl.textContent = `Saved! SKU: ${result.sku}`;
+      statusEl.className = 'setting-description success-text';
+    }
+
+    window.updateShopifySkuPreview();
+
+    // Update the model details panel status
+    window.updateShopifyListingStatus();
+  } catch (e) {
+    console.error('Error saving Shopify product:', e);
+    if (statusEl) {
+      statusEl.textContent = 'Error: ' + (e.message || e);
+      statusEl.className = 'setting-description warning-text';
+    }
+  }
+};
+
+/**
+ * Push the product to Shopify as a Draft.
+ */
+window.pushShopifyProductAsDraft = async function pushShopifyProductAsDraft() {
+  const statusEl = document.getElementById('shopify-editor-status');
+  const pushBtn = document.getElementById('shopify-push-draft');
+  const pushStatusBadge = document.getElementById('shopify-editor-push-status');
+
+  // First save locally if not already saved
+  if (!window._shopifyEditorContext.existingProductId) {
+    await window.saveShopifyProductLocally();
+    if (!window._shopifyEditorContext.existingProductId) {
+      // Save failed
+      return;
+    }
+  }
+
+  if (pushBtn) pushBtn.disabled = true;
+  if (statusEl) {
+    statusEl.textContent = 'Pushing to Shopify...';
+    statusEl.className = 'setting-description';
+  }
+
+  try {
+    const result = await window.electron.pushToShopify(window._shopifyEditorContext.existingProductId);
+
+    if (statusEl) {
+      statusEl.textContent = result.message || 'Pushed successfully!';
+      statusEl.className = 'setting-description success-text';
+    }
+
+    if (pushStatusBadge) {
+      pushStatusBadge.textContent = 'Draft';
+      pushStatusBadge.className = 'shopify-push-badge shopify-push-draft';
+    }
+
+    // Update the model details panel status
+    window.updateShopifyListingStatus();
+  } catch (e) {
+    console.error('Error pushing to Shopify:', e);
+    if (statusEl) {
+      statusEl.textContent = 'Push failed: ' + (e.message || e);
+      statusEl.className = 'setting-description warning-text';
+    }
+  } finally {
+    if (pushBtn) pushBtn.disabled = false;
+  }
+};
+
+/**
+ * Update the Shopify listing status in the model details panel.
+ */
+window.updateShopifyListingStatus = async function updateShopifyListingStatus() {
+  const statusEl = document.getElementById('shopify-listing-status');
+  if (!statusEl) return;
+
+  const modelId = window._shopifyEditorContext.modelId;
+  if (!modelId) {
+    statusEl.textContent = '';
+    return;
+  }
+
+  try {
+    const product = await window.electron.getShopifyProductByModel(modelId);
+    if (product) {
+      if (product.push_status === 'draft') {
+        statusEl.textContent = `Draft: ${product.sku}`;
+        statusEl.className = 'setting-description success-text';
+      } else {
+        statusEl.textContent = `Saved locally: ${product.sku}`;
+        statusEl.className = 'setting-description';
+      }
+    } else {
+      statusEl.textContent = 'No listing created';
+      statusEl.className = 'setting-description';
+    }
+  } catch (e) {
+    statusEl.textContent = '';
+  }
+};
+
+// Add event listeners for SKU preview updates
+document.addEventListener('DOMContentLoaded', function() {
+  ['shopify-collection-code', 'shopify-type-code-select', 'shopify-product-code', 'shopify-series-number', 'shopify-variant-number'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('input', window.updateShopifySkuPreview);
+      el.addEventListener('change', window.updateShopifySkuPreview);
+    }
+  });
+});
+
+// ============================================================================
+// Shopify Product Types Manager
+// ============================================================================
+
+/**
+ * Open the Product Types manager dialog and load types.
+ */
+window.openShopifyProductTypesDialog = async function openShopifyProductTypesDialog() {
+  const dialog = document.getElementById('shopify-product-types-dialog');
+  if (!dialog) return;
+
+  // Clear form
+  document.getElementById('shopify-type-code').value = '';
+  document.getElementById('shopify-type-name').value = '';
+  document.getElementById('shopify-type-status').textContent = '';
+
+  // Load types
+  await window.refreshShopifyProductTypesList();
+
+  dialog.showModal();
+};
+
+/**
+ * Refresh the product types list in the dialog.
+ */
+window.refreshShopifyProductTypesList = async function refreshShopifyProductTypesList() {
+  const listEl = document.getElementById('shopify-types-list');
+  if (!listEl) return;
+
+  try {
+    const types = await window.electron.getShopifyProductTypes();
+
+    if (!types || types.length === 0) {
+      listEl.innerHTML = '<p class="setting-description">No product types defined yet. Add some above.</p>';
+      return;
+    }
+
+    listEl.innerHTML = types.map(type => `
+      <div class="shopify-type-item" data-id="${type.id}">
+        <span class="shopify-type-code">${type.code}</span>
+        <span class="shopify-type-name">${type.name}</span>
+        <button type="button" class="shopify-type-delete" onclick="window.deleteShopifyProductType(${type.id}, '${type.name}')" title="Delete">&times;</button>
+      </div>
+    `).join('');
+  } catch (e) {
+    console.error('Error loading product types:', e);
+    listEl.innerHTML = '<p class="warning-text">Error loading product types.</p>';
+  }
+};
+
+/**
+ * Add a new product type.
+ */
+window.addShopifyProductType = async function addShopifyProductType() {
+  const codeEl = document.getElementById('shopify-type-code');
+  const nameEl = document.getElementById('shopify-type-name');
+  const statusEl = document.getElementById('shopify-type-status');
+
+  const code = codeEl?.value?.trim().toUpperCase() || '';
+  const name = nameEl?.value?.trim() || '';
+
+  if (!code || !name) {
+    if (statusEl) {
+      statusEl.textContent = 'Both code and name are required.';
+      statusEl.className = 'setting-description warning-text';
+    }
+    return;
+  }
+
+  try {
+    await window.electron.saveShopifyProductType({ code, name });
+
+    // Clear form and refresh
+    codeEl.value = '';
+    nameEl.value = '';
+    if (statusEl) {
+      statusEl.textContent = `Added "${code}" = ${name}`;
+      statusEl.className = 'setting-description success-text';
+    }
+
+    await window.refreshShopifyProductTypesList();
+  } catch (e) {
+    console.error('Error adding product type:', e);
+    if (statusEl) {
+      statusEl.textContent = 'Error: ' + (e.message || e);
+      statusEl.className = 'setting-description warning-text';
+    }
+  }
+};
+
+/**
+ * Delete a product type.
+ */
+window.deleteShopifyProductType = async function deleteShopifyProductType(typeId, typeName) {
+  const statusEl = document.getElementById('shopify-type-status');
+
+  if (!confirm(`Delete product type "${typeName}"?`)) {
+    return;
+  }
+
+  try {
+    await window.electron.deleteShopifyProductType(typeId);
+    if (statusEl) {
+      statusEl.textContent = `Deleted "${typeName}"`;
+      statusEl.className = 'setting-description success-text';
+    }
+    await window.refreshShopifyProductTypesList();
+  } catch (e) {
+    console.error('Error deleting product type:', e);
+    if (statusEl) {
+      statusEl.textContent = 'Error: ' + (e.message || e);
+      statusEl.className = 'setting-description warning-text';
+    }
+  }
+};
+
+// ============================================================================
+// Shopify Reconciliation Dialog
+// ============================================================================
+
+// Cache for Shopify products fetched from the store
+let shopifyProductsCache = null;
+// Cache for reconciliation folders
+let reconciliationFoldersCache = null;
+// Track whether to show skipped files in reconciliation
+let showSkippedInReconciliation = false;
+
+/**
+ * Get the current reconciliation filter/sort settings.
+ */
+function getReconciliationFilters() {
+  const fileTypeFilter = document.getElementById('reconciliation-filetype-filter')?.value || '3mf';
+  const designerFilter = document.getElementById('reconciliation-designer-filter')?.value || '';
+  const sortOption = document.getElementById('reconciliation-sort')?.value || 'name-asc';
+  const statusFilter = document.getElementById('reconciliation-status-filter')?.value || '';
+  return { fileTypeFilter, designerFilter, sortOption, statusFilter };
+}
+
+/**
+ * Apply filters and sorting to reconciliation folders.
+ */
+function applyReconciliationFiltersAndSort(folders, shopifyLinkedIds) {
+  if (!folders) return [];
+  const { fileTypeFilter, designerFilter, sortOption, statusFilter } = getReconciliationFilters();
+  const linkedIdSet = new Set(shopifyLinkedIds || []);
+
+  let filtered = [...folders];
+
+  // Apply file type filter - filter folders based on their files' extensions
+  if (fileTypeFilter) {
+    filtered = filtered.filter(f => {
+      // Check if any file in the folder matches the extension
+      return f.files.some(file => {
+        const ext = (file.fileName || '').split('.').pop().toLowerCase();
+        return ext === fileTypeFilter;
+      });
+    });
+    // Also filter the files within each folder to only show matching extensions
+    filtered = filtered.map(f => ({
+      ...f,
+      files: f.files.filter(file => {
+        const ext = (file.fileName || '').split('.').pop().toLowerCase();
+        return ext === fileTypeFilter;
+      }),
+      file_count: f.files.filter(file => {
+        const ext = (file.fileName || '').split('.').pop().toLowerCase();
+        return ext === fileTypeFilter;
+      }).length
+    }));
+  }
+
+  // Apply designer filter (extracted from folder path)
+  if (designerFilter) {
+    filtered = filtered.filter(f => {
+      // Extract designer from path (typically the parent folder of the product folder)
+      const pathParts = f.folder_path.replace(/\\/g, '/').split('/');
+      // Look for designer in the last 3 folder levels
+      const relevantParts = pathParts.slice(-3, -1).map(p => p.toLowerCase());
+      return relevantParts.some(part => part.toLowerCase() === designerFilter.toLowerCase());
+    });
+  }
+
+  // Apply status filter
+  if (statusFilter) {
+    filtered = filtered.filter(f => {
+      if (statusFilter === 'unlinked') return f.push_status !== 'will_create_new' && !f.shopify_product_id;
+      if (statusFilter === 'linked') return !!f.shopify_product_id;
+      if (statusFilter === 'new') return f.push_status === 'will_create_new';
+      return true;
+    });
+  }
+
+  // Apply sorting
+  filtered.sort((a, b) => {
+    switch (sortOption) {
+      case 'name-asc':
+        return a.folder_name.localeCompare(b.folder_name);
+      case 'name-desc':
+        return b.folder_name.localeCompare(a.folder_name);
+      case 'status-linked':
+        const aLinked = !!a.shopify_product_id || a.push_status === 'will_create_new' ? 0 : 1;
+        const bLinked = !!b.shopify_product_id || b.push_status === 'will_create_new' ? 0 : 1;
+        return aLinked - bLinked || a.folder_name.localeCompare(b.folder_name);
+      case 'status-unlinked':
+        const aUnlinked = !a.shopify_product_id && a.push_status !== 'will_create_new' ? 0 : 1;
+        const bUnlinked = !b.shopify_product_id && b.push_status !== 'will_create_new' ? 0 : 1;
+        return aUnlinked - bUnlinked || a.folder_name.localeCompare(b.folder_name);
+      case 'designer-asc':
+      case 'designer-desc':
+        // Extract designer from path
+        const getDesigner = (f) => {
+          const parts = f.folder_path.replace(/\\/g, '/').split('/');
+          return parts.length >= 2 ? parts[parts.length - 2] : '';
+        };
+        const designerA = getDesigner(a);
+        const designerB = getDesigner(b);
+        const cmp = designerA.localeCompare(designerB);
+        return sortOption === 'designer-desc' ? -cmp : cmp;
+      default:
+        return 0;
+    }
+  });
+
+  return filtered;
+}
+
+/**
+ * Populate the designer filter dropdown from available folders.
+ */
+function populateReconciliationDesignerFilter(folders) {
+  const select = document.getElementById('reconciliation-designer-filter');
+  if (!select || !folders) return;
+
+  // Destroy existing searchable select if present
+  if (select._searchableController) {
+    select._searchableController.destroy();
+  }
+
+  // Extract unique designers from folder paths
+  const designers = new Set();
+  folders.forEach(f => {
+    const parts = f.folder_path.replace(/\\/g, '/').split('/');
+    if (parts.length >= 2) {
+      designers.add(parts[parts.length - 2]); // Parent folder is typically the designer
+    }
+  });
+
+  const currentValue = select.value;
+  select.innerHTML = '<option value="">All Designers</option>';
+  [...designers].sort().forEach(d => {
+    select.innerHTML += `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`;
+  });
+  select.value = currentValue; // Restore previous selection
+
+  // Initialize searchable select
+  createSearchableSelect(select, {
+    compact: true,
+    placeholder: 'Search designers...'
+  });
+}
+
+/**
+ * Initialize reconciliation filter/sort event listeners.
+ */
+let reconciliationFiltersInitialized = false;
+function initReconciliationFilters() {
+  // Only initialize once per session
+  if (reconciliationFiltersInitialized) return;
+  reconciliationFiltersInitialized = true;
+
+  const fileTypeFilter = document.getElementById('reconciliation-filetype-filter');
+  const designerFilter = document.getElementById('reconciliation-designer-filter');
+  const sortSelect = document.getElementById('reconciliation-sort');
+  const statusFilter = document.getElementById('reconciliation-status-filter');
+
+  const applyFilters = () => {
+    if (reconciliationFoldersCache) {
+      renderReconciliationList();
+    }
+  };
+
+  if (fileTypeFilter) fileTypeFilter.addEventListener('change', applyFilters);
+  if (designerFilter) designerFilter.addEventListener('change', applyFilters);
+  if (sortSelect) sortSelect.addEventListener('change', applyFilters);
+  if (statusFilter) statusFilter.addEventListener('change', applyFilters);
+}
+
+/**
+ * Render the reconciliation list with current filters applied.
+ */
+async function renderReconciliationList() {
+  const listEl = document.getElementById('reconciliation-list');
+  const statusEl = document.getElementById('reconciliation-status');
+  if (!listEl || !reconciliationFoldersCache) return;
+
+  // Get linked IDs for filtering
+  const linkedIds = await window.electron.getLinkedShopifyProductIds();
+  const linkedIdSet = new Set(linkedIds || []);
+
+  // Filter out already-linked products from dropdown
+  const availableProducts = (shopifyProductsCache || []).filter(p => !linkedIdSet.has(p.id));
+
+  // Apply filters and sorting
+  const folders = applyReconciliationFiltersAndSort(reconciliationFoldersCache, linkedIds);
+
+  // Update status
+  const totalShopifyCount = shopifyProductsCache?.length || 0;
+  const availableCount = availableProducts.length;
+  const folderCount = folders?.length || 0;
+  const totalFolders = reconciliationFoldersCache?.length || 0;
+
+  if (statusEl) {
+    const filterNote = folderCount !== totalFolders ? ` (showing ${folderCount} of ${totalFolders})` : '';
+    statusEl.className = 'reconciliation-status';
+    statusEl.innerHTML = `
+      <span class="status-text">Found ${availableCount} available Shopify products (${totalShopifyCount - availableCount} already linked), ${totalFolders} local product folders${filterNote}.</span>
+      <button type="button" id="toggle-skipped-btn" onclick="window.toggleShowSkipped()" style="margin-left: 10px; font-size: 12px;">
+        ${showSkippedInReconciliation ? 'Hide Skipped' : 'Show Skipped'}
+      </button>
+    `;
+  }
+
+  // Render empty state
+  if (!folders || folders.length === 0) {
+    listEl.innerHTML = `
+      <div class="reconciliation-empty">
+        <div class="reconciliation-empty-icon">&#10003;</div>
+        <p>${reconciliationFoldersCache?.length ? 'No products match the current filters.' : 'All products are reconciled. No action needed.'}</p>
+      </div>
+    `;
+    return;
+  }
+
+  // Build HTML for filtered/sorted list
+  const html = folders.map(folder => {
+    const suggested = findBestMatch(folder.folder_name, availableProducts);
+    const matchScore = suggested ? calculateMatchScore(folder.folder_name, suggested.title) : 0;
+    const statusClass = folder.push_status === 'will_create_new' ? 'new' : 'unlinked';
+    const statusText = folder.push_status === 'will_create_new' ? 'Will Create New' : 'Needs Linking';
+
+    const pendingFiles = folder.files.filter(f => f.link_status !== 'skipped');
+    const skippedFiles = folder.files.filter(f => f.link_status === 'skipped');
+    const defaultPrimary = pendingFiles.find(f => f.is_primary) || pendingFiles[0];
+    const allFileIds = folder.files.map(f => f.model_id);
+    const defaultPrimaryId = defaultPrimary?.model_id || allFileIds[0];
+
+    return `
+      <div class="reconciliation-item" data-folder-path="${escapeHtml(folder.folder_path)}"
+           data-file-ids="${escapeHtml(JSON.stringify(allFileIds))}"
+           data-default-primary="${defaultPrimaryId}">
+        <div class="reconciliation-item-header">
+          <div>
+            <div class="reconciliation-product-name">${escapeHtml(folder.folder_name)}</div>
+            <div class="reconciliation-product-folder">${escapeHtml(folder.folder_path)}</div>
+          </div>
+          <span class="reconciliation-status-badge ${statusClass}">${statusText}</span>
+        </div>
+
+        ${folder.files.length > 1 ? `
+        <div class="reconciliation-files-section">
+          <label>3MF Files (${folder.file_count}):</label>
+          <div class="reconciliation-files-list">
+            ${pendingFiles.map((f, idx) => `
+              <div class="reconciliation-file ${f.is_primary ? 'primary' : ''}" data-model-id="${f.model_id}">
+                <label>
+                  <input type="radio" name="primary-file" value="${f.model_id}"
+                    ${(f.is_primary || (!defaultPrimary?.is_primary && idx === 0)) ? 'checked' : ''}>
+                  ${escapeHtml(f.fileName)}
+                  ${f.is_primary ? '<span class="primary-badge">Primary</span>' : ''}
+                </label>
+                <button type="button" class="skip-file-btn" data-action="skip-file" data-model-id="${f.model_id}" title="Skip this file">Skip</button>
+              </div>
+            `).join('')}
+            ${skippedFiles.length > 0 ? `
+              <div class="reconciliation-skipped-files">
+                <small>Skipped: ${skippedFiles.map(f => `
+                  <span class="skipped-file">
+                    ${escapeHtml(f.fileName)}
+                    <button type="button" class="unskip-btn" data-action="unskip-file" data-model-id="${f.model_id}" title="Restore">↩</button>
+                  </span>
+                `).join(', ')}</small>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+        ` : `
+        <div class="reconciliation-single-file">
+          <small>File: ${escapeHtml(pendingFiles[0]?.fileName || folder.files[0]?.fileName || 'Unknown')}</small>
+        </div>
+        `}
+
+        <div class="reconciliation-match-section">
+          <label>Link to:</label>
+          <select class="reconciliation-match-select" data-folder-path="${escapeHtml(folder.folder_path)}">
+            <option value="">-- Select Shopify product --</option>
+            <option value="__new__">Create new listing (no match)</option>
+            ${renderShopifyOptions(availableProducts, suggested?.id)}
+          </select>
+          ${suggested ? `<span class="reconciliation-suggested">Suggested: ${Math.round(matchScore * 100)}% match</span>` : ''}
+        </div>
+
+        <div class="reconciliation-actions">
+          <button type="button" class="confirm-link" data-action="confirm-link">Confirm Link</button>
+          <button type="button" class="mark-new" data-action="mark-new">Create New</button>
+          <button type="button" class="skip-folder" data-action="skip-folder" title="Skip all files in this folder">Skip Folder</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  listEl.innerHTML = html;
+
+  // Re-attach event delegation
+  listEl.removeEventListener('click', handleReconciliationClick);
+  listEl.addEventListener('click', handleReconciliationClick);
+
+  // Initialize searchable selects for Shopify product dropdowns
+  listEl.querySelectorAll('.reconciliation-match-select').forEach(select => {
+    createSearchableSelect(select, {
+      compact: true,
+      placeholder: 'Search Shopify products...',
+      getSubtitle: (option) => {
+        // Show SKU as subtitle if available
+        const sku = option.dataset?.sku;
+        return sku ? `SKU: ${sku}` : null;
+      }
+    });
+  });
+}
+
+/**
+ * Open the Shopify reconciliation dialog.
+ */
+window.openShopifyReconciliationDialog = async function openShopifyReconciliationDialog() {
+  const dialog = document.getElementById('shopify-reconciliation-dialog');
+  if (!dialog) return;
+
+  // Reset state
+  shopifyProductsCache = null;
+  reconciliationFoldersCache = null;
+  showSkippedInReconciliation = false;
+  reconciliationFiltersInitialized = false;
+
+  // Reset filter dropdowns to defaults
+  const fileTypeFilter = document.getElementById('reconciliation-filetype-filter');
+  const designerFilter = document.getElementById('reconciliation-designer-filter');
+  const sortSelect = document.getElementById('reconciliation-sort');
+  const statusFilter = document.getElementById('reconciliation-status-filter');
+  if (fileTypeFilter) fileTypeFilter.value = '3mf';
+  if (designerFilter) designerFilter.value = '';
+  if (sortSelect) sortSelect.value = 'name-asc';
+  if (statusFilter) statusFilter.value = '';
+
+  dialog.showModal();
+  await window.refreshReconciliation();
+};
+
+/**
+ * Toggle showing skipped files in reconciliation.
+ */
+window.toggleShowSkipped = async function toggleShowSkipped() {
+  showSkippedInReconciliation = !showSkippedInReconciliation;
+  const btn = document.getElementById('toggle-skipped-btn');
+  if (btn) {
+    btn.textContent = showSkippedInReconciliation ? 'Hide Skipped' : 'Show Skipped';
+  }
+  await window.refreshReconciliation();
+};
+
+/**
+ * Refresh reconciliation data from Shopify and local database.
+ * Now works at folder level instead of individual files.
+ */
+window.refreshReconciliation = async function refreshReconciliation() {
+  const statusEl = document.getElementById('reconciliation-status');
+  const listEl = document.getElementById('reconciliation-list');
+
+  if (!statusEl || !listEl) return;
+
+  // Show loading state
+  statusEl.className = 'reconciliation-status loading';
+  statusEl.innerHTML = '<span class="status-text">Fetching products from Shopify...</span>';
+  listEl.innerHTML = '';
+
+  try {
+    // Fetch Shopify products (cached for this session)
+    if (!shopifyProductsCache) {
+      shopifyProductsCache = await window.electron.fetchShopifyProducts();
+    }
+
+    // Fetch local folders that need reconciliation
+    reconciliationFoldersCache = await window.electron.getUnlinkedFolders(showSkippedInReconciliation);
+
+    // Populate designer filter dropdown
+    populateReconciliationDesignerFilter(reconciliationFoldersCache);
+
+    // Initialize filter listeners (only on first load)
+    initReconciliationFilters();
+
+    // Render with current filters
+    await renderReconciliationList();
+
+  } catch (e) {
+    console.error('Error loading reconciliation data:', e);
+    statusEl.className = 'reconciliation-status';
+
+    // Check for common error types
+    const errMsg = e.message || String(e);
+    if (errMsg.includes('credentials not configured')) {
+      statusEl.innerHTML = `
+        <span class="status-text" style="color: #ff6b6b;">
+          Shopify credentials not configured.<br>
+          <small>Please enter your Store Domain, Client ID, and Client Secret in the settings above, then click "Test Connection" to save them.</small>
+        </span>
+      `;
+    } else {
+      statusEl.innerHTML = `<span class="status-text" style="color: #ff6b6b;">Error: ${errMsg}</span>`;
+    }
+  }
+};
+
+/**
+ * Event delegation handler for reconciliation list clicks.
+ * Uses data-action attributes to avoid escaping issues with paths.
+ */
+async function handleReconciliationClick(event) {
+  // Don't interfere with select dropdowns or other form elements
+  if (event.target.closest('select, input, label')) return;
+
+  const button = event.target.closest('button[data-action]');
+  if (!button) return;
+
+  const action = button.dataset.action;
+  const itemEl = button.closest('.reconciliation-item');
+  if (!itemEl) return;
+
+  const folderPath = itemEl.dataset.folderPath;
+
+  switch (action) {
+    case 'confirm-link':
+      await handleConfirmLink(itemEl, folderPath);
+      break;
+    case 'mark-new':
+      await handleMarkNew(itemEl, folderPath);
+      break;
+    case 'skip-folder':
+      await handleSkipFolder(itemEl, folderPath);
+      break;
+    case 'skip-file':
+      const skipModelId = parseInt(button.dataset.modelId);
+      await handleSkipFile(folderPath, skipModelId);
+      break;
+    case 'unskip-file':
+      const unskipModelId = parseInt(button.dataset.modelId);
+      await handleUnskipFile(folderPath, unskipModelId);
+      break;
+  }
+}
+
+/**
+ * Handle confirm link button click.
+ */
+async function handleConfirmLink(itemEl, folderPath) {
+  const selectEl = itemEl.querySelector('.reconciliation-match-select');
+  if (!selectEl) return;
+
+  const shopifyProductGid = selectEl.value;
+  if (!shopifyProductGid) {
+    alert('Please select a Shopify product to link to, or click "Create New".');
+    return;
+  }
+
+  if (shopifyProductGid === '__new__') {
+    await handleMarkNew(itemEl, folderPath);
+    return;
+  }
+
+  // Get the selected primary model (from radio or data attribute for single-file folders)
+  const primaryRadio = itemEl.querySelector('input[name="primary-file"]:checked');
+  let primaryModelId = primaryRadio ? parseInt(primaryRadio.value) : null;
+
+  // For single-file folders, use the default primary from data attribute
+  if (!primaryModelId) {
+    primaryModelId = parseInt(itemEl.dataset.defaultPrimary);
+  }
+
+  if (!primaryModelId) {
+    alert('Unable to determine primary file for this product.');
+    return;
+  }
+
+  // Show loading state
+  const actionsEl = itemEl.querySelector('.reconciliation-actions');
+  if (actionsEl) {
+    actionsEl.innerHTML = '<span style="color: #ffc107;">Linking and importing variants...</span>';
+  }
+
+  try {
+    const result = await window.electron.linkFolderToShopify(folderPath, primaryModelId, shopifyProductGid);
+
+    // Update UI - mark as linked
+    const badgeEl = itemEl.querySelector('.reconciliation-status-badge');
+    if (badgeEl) {
+      badgeEl.className = 'reconciliation-status-badge linked';
+      badgeEl.textContent = 'Linked';
+    }
+    // Show success with variant count and title
+    if (actionsEl) {
+      const variantInfo = result.variantCount ? ` (${result.variantCount} variants)` : '';
+      const titleInfo = result.title ? ` to "${result.title}"` : '';
+      actionsEl.innerHTML = `<span style="color: #95bf47;">Linked${titleInfo}${variantInfo}</span>`;
+    }
+    selectEl.disabled = true;
+    // Disable file selection
+    itemEl.querySelectorAll('input[type="radio"]').forEach(r => r.disabled = true);
+    itemEl.querySelectorAll('.skip-file-btn, .unskip-btn').forEach(b => b.disabled = true);
+
+    // Update status count
+    await updateReconciliationCount();
+
+    // Scroll to next unlinked item
+    scrollToNextUnlinkedItem(itemEl);
+
+  } catch (e) {
+    console.error('Error linking folder:', e);
+    if (actionsEl) {
+      actionsEl.innerHTML = `
+        <button type="button" class="confirm-link" data-action="confirm-link">Confirm Link</button>
+        <button type="button" class="mark-new" data-action="mark-new">Create New</button>
+        <button type="button" class="skip-folder" data-action="skip-folder">Skip Folder</button>
+      `;
+    }
+    alert('Error linking folder: ' + (e.message || e));
+  }
+}
+
+/**
+ * Scroll to the next unlinked reconciliation item after the given element.
+ */
+function scrollToNextUnlinkedItem(currentItem) {
+  if (!currentItem) return;
+
+  // Small delay to let the UI update first
+  setTimeout(() => {
+    // Find the next sibling that's still unlinked (doesn't have "Linked" or "new" badge)
+    let nextItem = currentItem.nextElementSibling;
+    while (nextItem) {
+      if (nextItem.classList.contains('reconciliation-item')) {
+        const badge = nextItem.querySelector('.reconciliation-status-badge');
+        // Item is actionable if badge exists and is not "linked" or "new" (will create)
+        if (badge && !badge.classList.contains('linked') && !badge.classList.contains('new')) {
+          nextItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return;
+        }
+      }
+      nextItem = nextItem.nextElementSibling;
+    }
+
+    // No more items after, try from the beginning of the list
+    const list = currentItem.parentElement;
+    if (!list) return;
+
+    const allItems = list.querySelectorAll('.reconciliation-item');
+    for (const item of allItems) {
+      if (item === currentItem) continue;
+      const badge = item.querySelector('.reconciliation-status-badge');
+      if (badge && !badge.classList.contains('linked') && !badge.classList.contains('new')) {
+        item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+    }
+  }, 100);
+}
+
+/**
+ * Handle mark as new button click.
+ */
+async function handleMarkNew(itemEl, folderPath) {
+  // Get the selected primary model (from radio or data attribute for single-file folders)
+  const primaryRadio = itemEl.querySelector('input[name="primary-file"]:checked');
+  let primaryModelId = primaryRadio ? parseInt(primaryRadio.value) : null;
+
+  // For single-file folders, use the default primary from data attribute
+  if (!primaryModelId) {
+    primaryModelId = parseInt(itemEl.dataset.defaultPrimary);
+  }
+
+  if (!primaryModelId) {
+    alert('Unable to determine primary file for this product.');
+    return;
+  }
+
+  try {
+    await window.electron.markFolderAsNew(folderPath, primaryModelId);
+
+    // Update UI
+    const badgeEl = itemEl.querySelector('.reconciliation-status-badge');
+    if (badgeEl) {
+      badgeEl.className = 'reconciliation-status-badge new';
+      badgeEl.textContent = 'Will Create New';
+    }
+    // Update actions
+    const actionsEl = itemEl.querySelector('.reconciliation-actions');
+    if (actionsEl) {
+      actionsEl.innerHTML = '<span style="color: #00d4ff;">Will create new listing</span>';
+    }
+    // Disable select and radios
+    const selectEl = itemEl.querySelector('.reconciliation-match-select');
+    if (selectEl) selectEl.disabled = true;
+    itemEl.querySelectorAll('input[type="radio"]').forEach(r => r.disabled = true);
+    itemEl.querySelectorAll('.skip-file-btn, .unskip-btn').forEach(b => b.disabled = true);
+
+    // Update status count
+    await updateReconciliationCount();
+
+    // Scroll to next unlinked item
+    scrollToNextUnlinkedItem(itemEl);
+
+  } catch (e) {
+    console.error('Error marking folder as new:', e);
+    alert('Error: ' + (e.message || e));
+  }
+}
+
+/**
+ * Handle skip folder button click.
+ */
+async function handleSkipFolder(itemEl, folderPath) {
+  // Get all model IDs from data attribute
+  let modelIds = [];
+  try {
+    modelIds = JSON.parse(itemEl.dataset.fileIds || '[]');
+  } catch (e) {
+    console.error('Error parsing file IDs:', e);
+  }
+
+  if (modelIds.length === 0) {
+    alert('Unable to determine files in this folder.');
+    return;
+  }
+
+  // Find the next item before we refresh (since refresh will rebuild the DOM)
+  const nextFolderPath = itemEl.nextElementSibling?.dataset?.folderPath;
+
+  try {
+    // Skip all files in the folder
+    for (const modelId of modelIds) {
+      await window.electron.skipFolderFile(folderPath, modelId);
+    }
+    // Refresh to update the UI
+    await window.refreshReconciliation();
+
+    // Scroll to next item if it still exists
+    if (nextFolderPath) {
+      const nextItem = document.querySelector(`.reconciliation-item[data-folder-path="${CSS.escape(nextFolderPath)}"]`);
+      if (nextItem) {
+        nextItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  } catch (e) {
+    console.error('Error skipping folder:', e);
+    alert('Error: ' + (e.message || e));
+  }
+}
+
+/**
+ * Handle skip single file button click.
+ */
+async function handleSkipFile(folderPath, modelId) {
+  try {
+    await window.electron.skipFolderFile(folderPath, modelId);
+    // Refresh to update the UI
+    await window.refreshReconciliation();
+  } catch (e) {
+    console.error('Error skipping file:', e);
+    alert('Error: ' + (e.message || e));
+  }
+}
+
+/**
+ * Handle unskip file button click.
+ */
+async function handleUnskipFile(folderPath, modelId) {
+  try {
+    await window.electron.unskipFolderFile(folderPath, modelId);
+    // Refresh to update the UI
+    await window.refreshReconciliation();
+  } catch (e) {
+    console.error('Error unskipping file:', e);
+    alert('Error: ' + (e.message || e));
+  }
+}
+
+/**
+ * Find the best matching Shopify product by title using fuzzy matching.
+ */
+function findBestMatch(localTitle, shopifyProducts) {
+  if (!localTitle || !shopifyProducts || shopifyProducts.length === 0) return null;
+
+  let bestMatch = null;
+  let bestScore = 0;
+
+  for (const sp of shopifyProducts) {
+    const score = calculateMatchScore(localTitle, sp.title);
+    if (score > bestScore && score >= 0.3) {  // Threshold of 30% match
+      bestScore = score;
+      bestMatch = sp;
+    }
+  }
+
+  return bestMatch;
+}
+
+/**
+ * Calculate a match score between two strings (0-1).
+ */
+function calculateMatchScore(str1, str2) {
+  if (!str1 || !str2) return 0;
+
+  const s1 = str1.toLowerCase().trim();
+  const s2 = str2.toLowerCase().trim();
+
+  // Exact match
+  if (s1 === s2) return 1;
+
+  // Contains match
+  if (s1.includes(s2) || s2.includes(s1)) {
+    return 0.9;
+  }
+
+  // Word-based similarity
+  const words1 = s1.split(/[\s\-_]+/).filter(w => w.length > 2);
+  const words2 = s2.split(/[\s\-_]+/).filter(w => w.length > 2);
+
+  if (words1.length === 0 || words2.length === 0) return 0;
+
+  const overlap = words1.filter(w => words2.some(w2 => w2.includes(w) || w.includes(w2))).length;
+  return overlap / Math.max(words1.length, words2.length);
+}
+
+/**
+ * Render Shopify product options for the select dropdown.
+ */
+function renderShopifyOptions(shopifyProducts, suggestedId) {
+  if (!shopifyProducts || shopifyProducts.length === 0) return '';
+
+  return shopifyProducts.map(p => {
+    const selected = p.id === suggestedId ? 'selected' : '';
+    const skuAttr = p.sku ? ` data-sku="${escapeHtml(p.sku)}"` : '';
+    return `<option value="${escapeHtml(p.id)}" data-variant-id="${escapeHtml(p.variantId || '')}"${skuAttr} ${selected}>${escapeHtml(p.title)}</option>`;
+  }).join('');
+}
+
+// Legacy handlers kept for backwards compatibility (not used by new UI)
+window.confirmReconciliationLink = async function(modelId) {
+  console.warn('confirmReconciliationLink is deprecated');
+  await window.electron.markAsNewProduct(modelId);
+  await updateReconciliationCount();
+};
+
+window.markAsNewListing = async function(modelId) {
+  console.warn('markAsNewListing is deprecated');
+  await window.electron.markAsNewProduct(modelId);
+  await updateReconciliationCount();
+};
+
+/**
+ * Update the reconciliation status count.
+ */
+async function updateReconciliationCount() {
+  const statusEl = document.getElementById('reconciliation-status');
+  if (!statusEl) return;
+
+  try {
+    const folders = await window.electron.getUnlinkedFolders(false);
+    const remaining = folders?.length || 0;
+
+    if (remaining === 0) {
+      statusEl.innerHTML = `
+        <span class="status-text" style="color: #95bf47;">All products are reconciled!</span>
+        <button type="button" id="toggle-skipped-btn" onclick="window.toggleShowSkipped()" style="margin-left: 10px; font-size: 12px;">
+          ${showSkippedInReconciliation ? 'Hide Skipped' : 'Show Skipped'}
+        </button>
+      `;
+    } else {
+      statusEl.innerHTML = `
+        <span class="status-text">${remaining} product folder(s) still need reconciliation.</span>
+        <button type="button" id="toggle-skipped-btn" onclick="window.toggleShowSkipped()" style="margin-left: 10px; font-size: 12px;">
+          ${showSkippedInReconciliation ? 'Hide Skipped' : 'Show Skipped'}
+        </button>
+      `;
+    }
+  } catch (e) {
+    // Ignore
+  }
+}
+
+/**
+ * Simple HTML escaping helper.
+ */
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// ============================================================================
+// End Shopify Settings Dialog
+// ============================================================================
 
 const FILE_TYPE_CATALOG_FALLBACK = [
   { id: '3ds', label: '3DS (.3ds)' },
@@ -3819,6 +7057,9 @@ async function showModelDetails(filePath) {
     if (typeof window.SidebarLayout?.collapseFiltersForDetails === 'function') {
       window.SidebarLayout.collapseFiltersForDetails();
     }
+
+    // Reinitialize inline searchable selects (they may have been cloned)
+    initializeInlineSearchableSelects();
     requestAnimationFrame(() => {
       detailsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
@@ -7078,7 +10319,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  const previewSizeSwitcher = document.getElementById('preview-size-switcher');
+  const previewSizeSwitcher = document.getElementById('toolbar-preview-size-switcher');
   if (previewSizeSwitcher) {
     previewSizeSwitcher.querySelectorAll('[data-preview-size]').forEach((sizeBtn) => {
       sizeBtn.addEventListener('click', async (e) => {
@@ -7219,6 +10460,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       populateParentModelFilter(),
       populateTagFilter()
     ]);
+
+    // Auto-scan library folders on startup (if configured)
+    // Run in background after initial load so UI is responsive
+    setTimeout(async () => {
+      if (typeof window.autoScanLibraryFolders === 'function') {
+        await window.autoScanLibraryFolders();
+      }
+    }, 1000);
   });
 
   // Update the edit mode toggle button listener
@@ -7893,6 +11142,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   await initializeTags();
   initializeListButtons();
+  initializeInlineSearchableSelects();
 
   // Update the tag filter event listener
   document.getElementById('tag-filter').addEventListener('change', async (event) => {
@@ -8058,7 +11308,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Add scan directory button event listener
   document.getElementById('scan-directory-button')?.addEventListener('click', async () => {
     if (isScanning) return; // Prevent multiple scans
-    
+
     // First, check if there are any active filters and clear them
     const clearFilterButton = document.querySelector('.clear-filter-button');
     if (clearFilterButton) {
@@ -8067,17 +11317,60 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Wait a moment for the filter clearing to complete
       await new Promise(resolve => setTimeout(resolve, 100));
     }
-    
+
+    // Check for configured library folders
+    const libraryFolders = await window.electron.getLibraryFolders();
+    const enabledFolders = libraryFolders.filter(f => f.enabled);
+
+    if (enabledFolders.length > 0) {
+      // Scan all enabled library folders
+      console.log(`Scanning ${enabledFolders.length} library folder(s)`);
+
+      // Disable the button and update its appearance
+      const scanButton = document.getElementById('scan-directory-button');
+      scanButton.disabled = true;
+      scanButton.style.opacity = '0.5';
+      scanButton.style.cursor = 'not-allowed';
+      isScanning = true;
+
+      // Show progress section
+      showProgressBars();
+
+      try {
+        for (const folder of enabledFolders) {
+          console.log('Scanning:', folder.path);
+          await scanAndRenderDirectory(folder.path, false, false);
+          await window.electron.updateLibraryFolderScanTime(folder.id);
+        }
+
+        // Update UI after scan completes
+        await populateDesignerDropdown();
+        await populateParentModelFilter();
+        await populateTagFilter();
+        await populateLicenseFilter();
+      } catch (error) {
+        console.error('Error scanning library folders:', error);
+      } finally {
+        scanButton.disabled = false;
+        scanButton.style.opacity = '1';
+        scanButton.style.cursor = 'pointer';
+        isScanning = false;
+        hideProgressBars();
+      }
+      return;
+    }
+
+    // No library folders configured - fall back to legacy behavior
     // Check if we're in server mode
     const serverMode = await window.electron.isServerMode();
     let directoryPath;
-    
+
     if (serverMode) {
       // In server mode, prompt for UNC path via text input
       // Pre-fill with STL Home if it's set
       const stlHomes = await getStlHomeDirectories();
       const defaultPath = stlHomes[0] || '';
-      const promptMessage = defaultPath 
+      const promptMessage = defaultPath
         ? `Enter UNC path to scan (e.g., \\\\server\\share\\path):\n\nCurrent STL Home: ${defaultPath}`
         : 'Enter UNC path to scan (e.g., \\\\server\\share\\path):';
       const uncPath = prompt(promptMessage, defaultPath);
@@ -8087,6 +11380,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Normal mode: use file dialog
       directoryPath = await window.electron.openFileDialog();
       if (!directoryPath || directoryPath.length === 0) return;
+    }
+
+    // Add the selected folder to library folders
+    try {
+      await window.electron.addLibraryFolder(directoryPath[0]);
+    } catch (error) {
+      // May already exist, that's OK
+      console.log('Folder may already be in library:', error.message);
     }
 
     await window.electron.saveDirectory(directoryPath[0]);
@@ -10047,6 +13348,116 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  // Handle show-parent-model-dialog event from context menu
+  if (window.electron.onShowParentModelDialog) {
+    window.electron.onShowParentModelDialog(async (data) => {
+      const dialog = document.getElementById('set-parent-model-dialog');
+      const select = document.getElementById('set-parent-model-select');
+      const input = document.getElementById('set-parent-model-input');
+      const info = document.getElementById('set-parent-model-info');
+      const confirmBtn = document.getElementById('set-parent-model-confirm');
+
+      if (!dialog) return;
+
+      const filePaths = data?.filePaths || [];
+      const currentValue = data?.currentValue || '';
+
+      // Populate the select with existing parent models
+      if (select) {
+        // Destroy existing searchable select if present
+        if (select._searchableController) {
+          select._searchableController.destroy();
+        }
+
+        select.innerHTML = '<option value="">None (Clear Parent)</option>';
+        try {
+          const parentModels = await window.electron.getParentModels();
+          parentModels.forEach(pm => {
+            if (pm) {
+              const option = document.createElement('option');
+              option.value = pm;
+              option.textContent = pm;
+              if (pm === currentValue) option.selected = true;
+              select.appendChild(option);
+            }
+          });
+        } catch (e) {
+          console.error('Error loading parent models:', e);
+        }
+
+        // Initialize searchable select
+        createSearchableSelect(select, {
+          placeholder: 'Search parent models...'
+        });
+
+        // Clear text input when select changes
+        select.addEventListener('change', () => {
+          if (input) input.value = '';
+        });
+      }
+
+      if (input) {
+        input.value = '';
+        // Clear select when user types in input
+        input.addEventListener('input', () => {
+          if (select && input.value.trim()) {
+            select.value = '';
+            if (select._searchableController) {
+              select._searchableController.refresh();
+            }
+          }
+        });
+      }
+
+      info.textContent = `Setting parent model for ${filePaths.length} model${filePaths.length === 1 ? '' : 's'}`;
+
+      // Store filePaths for use on submit
+      dialog.dataset.filePaths = JSON.stringify(filePaths);
+
+      // Remove any old handler and add new one
+      const form = dialog.querySelector('form');
+      const newForm = form.cloneNode(true);
+      form.parentNode.replaceChild(newForm, form);
+
+      newForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const newSelect = document.getElementById('set-parent-model-select');
+        const newInput = document.getElementById('set-parent-model-input');
+        // Prefer text input if filled, otherwise use select
+        const inputValue = newInput?.value?.trim() || '';
+        const selectValue = newSelect?.value || '';
+        const parentModelValue = inputValue || selectValue;
+        const paths = JSON.parse(dialog.dataset.filePaths || '[]');
+
+        if (paths.length > 0) {
+          try {
+            await window.electron.setParentModelBatch(paths, parentModelValue);
+            console.log(`[Parent Model] Set to "${parentModelValue || '(cleared)'}" for ${paths.length} models`);
+            dialog.close();
+
+            // Refresh the grid
+            if (typeof window.forceGridRefresh === 'function') {
+              await window.forceGridRefresh();
+            } else if (typeof window.performCombinedSearch === 'function') {
+              await window.performCombinedSearch({ force: true });
+            }
+          } catch (error) {
+            console.error('Error setting parent model:', error);
+            await window.electron.showMessage('Error', 'Failed to set parent model: ' + error.message);
+          }
+        }
+      });
+
+      // Wire up cancel button
+      const cancelBtn = document.getElementById('set-parent-model-cancel');
+      if (cancelBtn) {
+        cancelBtn.onclick = () => dialog.close();
+      }
+
+      dialog.showModal();
+    });
+  }
+
   // Add this near other dialog event listeners
   window._electronRealEventHandlers['open-theme-settings'] = function() {
     const themeDialog = document.getElementById('settings-dialog');
@@ -11194,7 +14605,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Add event listeners on filter and search elements so that the "view-library-message" is removed when a filter or search is active.
-  ["designer-select", "license-select", "parent-select", "printed-select", "new-select", "favorite-select", "rating-select", "rating-min-select", "tag-filter", "filament-filter", "filetype-select", "search-filter-input"].forEach(id => {
+  ["designer-select", "license-select", "parent-select", "printed-select", "new-select", "favorite-select", "rating-select", "rating-min-select", "tag-filter", "filament-filter", "filetype-select", "filter-3mf-only", "filter-shopify-linked", "filter-shopify-not-linked", "search-filter-input"].forEach(id => {
     const el = document.getElementById(id);
     if (el) {
       el.addEventListener("change", () => {
@@ -11586,6 +14997,145 @@ document.addEventListener('DOMContentLoaded', async () => {
       await window.electron.openExternal(url);
     }
   });
+
+  // Library folders dialog
+  async function renderLibraryFoldersList() {
+    const listEl = document.getElementById('library-folders-list');
+    if (!listEl) return;
+
+    const folders = await window.electron.getLibraryFolders();
+
+    if (!folders || folders.length === 0) {
+      listEl.innerHTML = '<div class="library-folders-empty">No folders configured. Click "Add Folder" to add your first library folder.</div>';
+      return;
+    }
+
+    listEl.innerHTML = folders.map(folder => {
+      const lastScanned = folder.last_scanned
+        ? new Date(folder.last_scanned).toLocaleString()
+        : 'Never';
+      return `
+        <div class="library-folder-item" data-folder-id="${folder.id}">
+          <div style="flex: 1; min-width: 0;">
+            <div class="library-folder-path" title="${folder.path}">${folder.path}</div>
+            <div class="library-folder-scan-info">Last scanned: ${lastScanned}</div>
+          </div>
+          <div class="library-folder-controls">
+            <label>
+              <input type="checkbox" class="folder-enabled-checkbox" ${folder.enabled ? 'checked' : ''}>
+              Enabled
+            </label>
+            <label>
+              <input type="checkbox" class="folder-autoscan-checkbox" ${folder.auto_scan ? 'checked' : ''}>
+              Auto-scan
+            </label>
+            <button type="button" class="library-folder-remove" title="Remove folder">✕</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // Attach event handlers
+    listEl.querySelectorAll('.library-folder-item').forEach(item => {
+      const folderId = parseInt(item.dataset.folderId, 10);
+
+      const enabledCheckbox = item.querySelector('.folder-enabled-checkbox');
+      const autoscanCheckbox = item.querySelector('.folder-autoscan-checkbox');
+      const removeButton = item.querySelector('.library-folder-remove');
+
+      enabledCheckbox?.addEventListener('change', async () => {
+        await window.electron.updateLibraryFolder({
+          id: folderId,
+          enabled: enabledCheckbox.checked,
+          auto_scan: autoscanCheckbox.checked
+        });
+      });
+
+      autoscanCheckbox?.addEventListener('change', async () => {
+        await window.electron.updateLibraryFolder({
+          id: folderId,
+          enabled: enabledCheckbox.checked,
+          auto_scan: autoscanCheckbox.checked
+        });
+      });
+
+      removeButton?.addEventListener('click', async () => {
+        if (confirm('Remove this folder from your library? Models already imported will remain.')) {
+          await window.electron.removeLibraryFolder(folderId);
+          await renderLibraryFoldersList();
+        }
+      });
+    });
+  }
+
+  window.openLibraryFoldersDialog = async function openLibraryFoldersDialog() {
+    const dialog = document.getElementById('library-folders-dialog');
+    if (!dialog) return;
+    await renderLibraryFoldersList();
+    dialog.showModal();
+  };
+
+  document.getElementById('library-folders-button')?.addEventListener('click', async () => {
+    await window.openLibraryFoldersDialog();
+  });
+
+  // Track last folder location for file dialogs within this session
+  let lastLibraryFolderDialogPath = null;
+
+  document.getElementById('add-library-folder-button')?.addEventListener('click', async () => {
+    const serverMode = await window.electron.isServerMode();
+    let folderPath;
+
+    if (serverMode) {
+      // In server mode, prompt for UNC path
+      folderPath = prompt('Enter folder path (e.g., \\\\server\\share\\path):');
+      if (!folderPath || !folderPath.trim()) return;
+      folderPath = folderPath.trim();
+    } else {
+      // Normal mode: use file dialog, starting at last location or most recent library folder
+      const selected = await window.electron.openFileDialog(lastLibraryFolderDialogPath);
+      if (!selected || selected.length === 0) return;
+      folderPath = selected[0];
+      // Remember this location for next time
+      lastLibraryFolderDialogPath = folderPath;
+    }
+
+    try {
+      await window.electron.addLibraryFolder(folderPath);
+      await renderLibraryFoldersList();
+    } catch (error) {
+      alert(error.message || 'Failed to add folder');
+    }
+  });
+
+  // Auto-scan library folders on startup
+  window.autoScanLibraryFolders = async function autoScanLibraryFolders() {
+    try {
+      const folders = await window.electron.getLibraryFolders();
+      const autoScanFolders = folders.filter(f => f.enabled && f.auto_scan);
+
+      if (autoScanFolders.length === 0) {
+        console.log('[Auto-scan] No folders configured for auto-scan');
+        return;
+      }
+
+      console.log(`[Auto-scan] Starting scan of ${autoScanFolders.length} folder(s)`);
+
+      for (const folder of autoScanFolders) {
+        console.log(`[Auto-scan] Scanning: ${folder.path}`);
+        try {
+          await scanAndRenderDirectory(folder.path, true, false);
+          await window.electron.updateLibraryFolderScanTime(folder.id);
+        } catch (error) {
+          console.error(`[Auto-scan] Error scanning ${folder.path}:`, error);
+        }
+      }
+
+      console.log('[Auto-scan] Complete');
+    } catch (error) {
+      console.error('[Auto-scan] Error:', error);
+    }
+  };
 
   async function copyTextToClipboard(text) {
     const value = text == null ? '' : String(text);
@@ -18014,7 +21564,7 @@ function closeListViewColumnsPopover() {
 }
 
 function syncPreviewSizeSwitcherActive() {
-  const wrap = document.getElementById('preview-size-switcher');
+  const wrap = document.getElementById('toolbar-preview-size-switcher');
   if (!wrap) return;
   wrap.querySelectorAll('[data-preview-size]').forEach(b => {
     b.classList.toggle('active', b.dataset.previewSize === currentPreviewTileSize);
@@ -18024,19 +21574,23 @@ function syncPreviewSizeSwitcherActive() {
 function updateListViewColumnsToolbarButton() {
   const btn = document.getElementById('list-view-columns-toolbar-btn');
   if (btn) btn.hidden = currentGridView !== 'list';
-  const previewSwitcher = document.getElementById('preview-size-switcher');
-  if (previewSwitcher) {
-    const showPreviewSizer = currentGridView === 'preview';
-    previewSwitcher.hidden = !showPreviewSizer;
+  // Also update toolbar columns button
+  const toolbarColumnsBtn = document.getElementById('toolbar-list-columns-btn');
+  if (toolbarColumnsBtn) toolbarColumnsBtn.hidden = currentGridView !== 'list';
+  const toolbarPreviewSwitcher = document.getElementById('toolbar-preview-size-switcher');
+  const showPreviewSizer = currentGridView === 'preview';
+  if (toolbarPreviewSwitcher) {
+    toolbarPreviewSwitcher.hidden = !showPreviewSizer;
     if (showPreviewSizer) {
-      previewSwitcher.style.display = '';
+      toolbarPreviewSwitcher.style.display = '';
     } else {
-      previewSwitcher.style.display = 'none';
+      toolbarPreviewSwitcher.style.display = 'none';
     }
-    previewSwitcher.setAttribute('aria-hidden', showPreviewSizer ? 'false' : 'true');
+    toolbarPreviewSwitcher.setAttribute('aria-hidden', showPreviewSizer ? 'false' : 'true');
     syncPreviewSizeSwitcherActive();
   }
-  document.querySelector('.grid-view-selector')?.classList.toggle('preview-view-active', currentGridView === 'preview');
+  // Update preview-view-active class on toolbar-view-buttons
+  document.querySelector('.toolbar-view-buttons')?.classList.toggle('preview-view-active', currentGridView === 'preview');
 }
 window.updateListViewColumnsToolbarButton = updateListViewColumnsToolbarButton;
 
@@ -20097,17 +23651,103 @@ function initializeListButtons() {
     // Remove existing listeners to avoid duplicates
     const newButton = button.cloneNode(true);
     button.parentNode.replaceChild(newButton, button);
-    
+
     newButton.addEventListener('click', async () => {
       const fieldType = newButton.dataset.field;
       const targetSelectId = newButton.dataset.target;
       const mode = newButton.dataset.mode || 'filter';
       const containerId = newButton.dataset.container || null;
       const isRemove = newButton.dataset.remove === 'true';
-      
+
       await showSearchableListDialog(fieldType, targetSelectId, mode, containerId, isRemove);
     });
   });
+}
+
+/**
+ * Initialize inline searchable select functionality for model details dropdowns.
+ * Allows typing to filter options while the dropdown is focused.
+ */
+function initializeInlineSearchableSelects() {
+  const selectIds = ['model-designer', 'model-parent', 'model-license', 'multi-designer', 'multi-parent', 'multi-license'];
+
+  selectIds.forEach(selectId => {
+    const select = document.getElementById(selectId);
+    if (!select || select.dataset.inlineSearchInitialized === 'true') return;
+
+    let searchBuffer = '';
+    let searchTimeout = null;
+
+    select.addEventListener('keydown', (e) => {
+      // Allow normal navigation keys
+      if (['ArrowDown', 'ArrowUp', 'Enter', 'Escape', 'Tab'].includes(e.key)) {
+        return;
+      }
+
+      // Handle backspace
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        searchBuffer = searchBuffer.slice(0, -1);
+        filterSelectOptions(select, searchBuffer);
+        return;
+      }
+
+      // Only handle printable characters
+      if (e.key.length === 1) {
+        e.preventDefault();
+        searchBuffer += e.key.toLowerCase();
+        filterSelectOptions(select, searchBuffer);
+
+        // Clear buffer after 1.5 seconds of no typing
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+          searchBuffer = '';
+          // Show all options again
+          Array.from(select.options).forEach(opt => {
+            opt.hidden = false;
+          });
+        }, 1500);
+      }
+    });
+
+    // Clear buffer when focus is lost
+    select.addEventListener('blur', () => {
+      searchBuffer = '';
+      clearTimeout(searchTimeout);
+      // Show all options
+      Array.from(select.options).forEach(opt => {
+        opt.hidden = false;
+      });
+    });
+
+    select.dataset.inlineSearchInitialized = 'true';
+  });
+}
+
+/**
+ * Filter select options based on search string.
+ */
+function filterSelectOptions(select, searchStr) {
+  if (!select) return;
+
+  const lowerSearch = searchStr.toLowerCase();
+  let firstMatch = null;
+
+  Array.from(select.options).forEach((opt, idx) => {
+    const text = opt.textContent.toLowerCase();
+    const matches = !lowerSearch || text.includes(lowerSearch);
+    opt.hidden = !matches;
+
+    if (matches && !firstMatch && idx > 0) { // Skip first "None" or "Select" option
+      firstMatch = opt;
+    }
+  });
+
+  // Select the first matching option
+  if (firstMatch) {
+    select.value = firstMatch.value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  }
 }
 
 // Remove all existing DOMContentLoaded event listeners and create a single one
@@ -20219,7 +23859,30 @@ async function initializeAppOnce() {
     } catch (error) {
       console.error('Error initializing settings:', error);
     }
-    
+
+    // Initialize Parent Model grouping toggle
+    try {
+      const groupingEnabled = await window.electron.getSetting('groupingDisplayEnabled');
+      parentModelGroupingEnabled = groupingEnabled === '1';
+
+      const groupingToggle = document.getElementById('grouping-display-toggle');
+      if (groupingToggle) {
+        groupingToggle.checked = parentModelGroupingEnabled;
+
+        groupingToggle.addEventListener('change', async (e) => {
+          parentModelGroupingEnabled = e.target.checked;
+          await window.electron.saveSetting('groupingDisplayEnabled', parentModelGroupingEnabled ? '1' : '0');
+          console.log('[Grouping] Parent Model grouping', parentModelGroupingEnabled ? 'enabled' : 'disabled');
+          // Refresh the grid to apply grouping change
+          if (typeof updateModelGrid === 'function') {
+            updateModelGrid();
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error initializing grouping toggle:', error);
+    }
+
     console.log('3. Checking current version...');
     const currentVersion = await window.electron.getSetting('currentVersion');
     const isBeta = (await window.electron.getSetting('betaOptIn')) === 'true';
@@ -20862,6 +24525,7 @@ async function showMultiEditPanel() {
   
   // Initialize List buttons for multi-edit panel
   initializeListButtons();
+  initializeInlineSearchableSelects();
 }
 
 // Update the edit mode toggle handler to call showMultiEditPanel when entering multi-edit mode
@@ -21262,6 +24926,15 @@ function createModelItem(model, viewMode = null, thumbPriority = THUMB_PRIORITY_
     archiveStatus.className = 'archive-status';
     archiveStatus.textContent = 'Archive';
     item.appendChild(archiveStatus);
+  }
+
+  // Shopify linked status badge
+  if (model.shopifyLinked) {
+    const shopifyStatus = document.createElement('div');
+    shopifyStatus.className = 'shopify-status';
+    shopifyStatus.textContent = 'Shopify';
+    shopifyStatus.title = 'Linked to Shopify';
+    item.appendChild(shopifyStatus);
   }
 
   // Define thumbnail sizes based on view mode (optimized)
@@ -22251,13 +25924,22 @@ function createModelItem(model, viewMode = null, thumbPriority = THUMB_PRIORITY_
         toggleModelSelection(item, model.filePath);
       }
     });
-    
+
+    // Add double-click handler to open Shopify editor
+    item.addEventListener('dblclick', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (typeof window.openShopifyProductEditor === 'function') {
+        window.openShopifyProductEditor();
+      }
+    });
+
     // Add context menu handler for list view - works on entire element
     addContextMenuHandler(item, model.filePath);
-    
+
     return item;
   }
-  
+
   // Preview view: dense square wall (see preview-wall.css)
   if (view === 'preview') {
     const tilePx = getPreviewTileSizePx();
@@ -22324,8 +26006,8 @@ function createModelItem(model, viewMode = null, thumbPriority = THUMB_PRIORITY_
     item.addEventListener('dblclick', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      if (typeof window.openPreview === 'function') {
-        window.openPreview(model.filePath);
+      if (typeof window.openShopifyProductEditor === 'function') {
+        window.openShopifyProductEditor();
       }
     });
 
@@ -22756,6 +26438,15 @@ function createModelItem(model, viewMode = null, thumbPriority = THUMB_PRIORITY_
     }
   });
 
+  // Add double-click handler to open Shopify editor
+  item.addEventListener('dblclick', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (typeof window.openShopifyProductEditor === 'function') {
+      window.openShopifyProductEditor();
+    }
+  });
+
   // Add context menu
   addContextMenuHandler(item, model.filePath);
 
@@ -22828,6 +26519,10 @@ const parentModelExpandedGroups = new Set();
 const zipArchiveExpandedGroups = new Set();
 const bundleExpandedGroups = new Set();
 let virtualGridGroupLayoutGen = 0;
+
+// Parent Model grouping display control - when false, parentModel-based grouping is disabled
+// (bundle/zip grouping remains active)
+let parentModelGroupingEnabled = false;
 
 function invalidateVirtualGridLayoutCache(container = document.querySelector('.file-grid')) {
   virtualGridGroupLayoutGen += 1;
@@ -23047,6 +26742,7 @@ function buildParentModelDisplayRecords(models) {
     });
   });
 
+  // Bundle grouping (zip archive siblings) - always active
   const bundleGroupedRecords = buildGroupedDisplayRecords(records, {
     groupKind: 'bundle',
     keyPrefix: 'bundle',
@@ -23054,6 +26750,11 @@ function buildParentModelDisplayRecords(models) {
     getGroupLabelFromModel: getBundleGroupLabel,
     getGroupKeyFromModel: getBundleGroupKey
   });
+
+  // Parent model grouping - only when enabled via toggle
+  if (!parentModelGroupingEnabled) {
+    return bundleGroupedRecords;
+  }
 
   return buildGroupedDisplayRecords(bundleGroupedRecords, {
     groupKind: 'parentModel',

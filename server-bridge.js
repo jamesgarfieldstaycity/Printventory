@@ -492,6 +492,11 @@
     'loadDirectory': 'load-directory',
     'openFileDialog': 'open-file-dialog',
     'saveDirectory': 'save-directory',
+    'getLibraryFolders': 'get-library-folders',
+    'addLibraryFolder': 'add-library-folder',
+    'updateLibraryFolder': 'update-library-folder',
+    'removeLibraryFolder': 'remove-library-folder',
+    'updateLibraryFolderScanTime': 'update-library-folder-scan-time',
     'scanDirectory': 'scan-directory',
     'getModel': 'get-model',
     'getModelsFiltered': 'get-models-filtered',
@@ -504,6 +509,18 @@
     'setThumbnailGenerationActive': 'set-thumbnail-generation-active',
     'getDesigners': 'get-designers',
     'getLicenses': 'get-licenses',
+    'setParentModelBatch': 'set-parent-model-batch',
+    'fetchShopifyProducts': 'fetch-shopify-products',
+    'getLinkedShopifyProductIds': 'get-linked-shopify-product-ids',
+    'getUnlinkedFolders': 'get-unlinked-folders',
+    'linkFolderToShopify': 'link-folder-to-shopify',
+    'markFolderAsNew': 'mark-folder-as-new',
+    'skipFolderFile': 'skip-folder-file',
+    'unskipFolderFile': 'unskip-folder-file',
+    'updateLinkedShopifyProduct': 'update-linked-shopify-product',
+    'deleteShopifyProductMedia': 'delete-shopify-product-media',
+    'uploadShopifyProductImages': 'upload-shopify-product-images',
+    'reorderShopifyProductMedia': 'reorder-shopify-product-media',
     'getModelsByDesigner': 'get-models-by-designer',
     'showItemInFolder': 'show-item-in-folder',
     'openPath': 'open-path',
@@ -720,7 +737,13 @@
   window.electron.onRefreshGrid = function(callback) {
     window.electron.on('refresh-grid', callback);
   };
-  
+
+  window.electron.onShowParentModelDialog = function(callback) {
+    window.electron.on('show-parent-model-dialog', (data) => {
+      callback(data);
+    });
+  };
+
   window.electron.onThumbnailAdded = function(callback) {
     window.electron.on('thumbnail-added', (data) => {
       // In server mode via WebSocket, data comes directly as the first argument

@@ -44,7 +44,13 @@ function getCurrentLibraryFilters() {
   const ratingMinStatus = document.getElementById("rating-min-select")?.value || "all";
   const tagFilter = document.getElementById("tag-filter")?.value || "";
   const filamentFilter = document.getElementById("filament-filter")?.value || "";
-  const fileType = document.getElementById("filetype-select")?.value || "";
+  // Quick filter checkboxes override the dropdown values
+  const filter3mfOnly = document.getElementById("filter-3mf-only")?.checked;
+  const fileType = filter3mfOnly ? "3mf" : (document.getElementById("filetype-select")?.value || "");
+
+  const filterShopifyLinked = document.getElementById("filter-shopify-linked")?.checked;
+  const filterShopifyNotLinked = document.getElementById("filter-shopify-not-linked")?.checked;
+  const shopifyFilter = filterShopifyLinked ? "linked" : (filterShopifyNotLinked ? "not-linked" : "");
 
   const filters = {
     designerInverted: window.invertedFilters?.designer || false,
@@ -59,6 +65,7 @@ function getCurrentLibraryFilters() {
     tagInverted: window.invertedFilters?.tag || false,
     filamentInverted: window.invertedFilters?.filament || false,
     fileType,
+    shopifyFilter,
     searchInverted: window.invertedFilters?.search || false,
     directory: window.currentDirectoryFilter
   };
@@ -92,6 +99,7 @@ function libraryFiltersAreActive(filters) {
   if (f.rating && f.rating !== "all") return true;
   if (f.ratingMin && f.ratingMin !== "all") return true;
   if (f.fileType) return true;
+  if (f.shopifyFilter) return true;
   if (f.directory) return true;
   if (f.dateAdded) return true;
   if (Array.isArray(f.searchTokens) && f.searchTokens.length) return true;
@@ -194,6 +202,13 @@ function clearAllLibraryFilters() {
   setLibrarySelectValue("tag-filter", "");
   setLibrarySelectValue("filament-filter", "");
   setLibrarySelectValue("filetype-select", "");
+  // Clear quick filter checkboxes
+  const filter3mfOnly = document.getElementById("filter-3mf-only");
+  const filterShopifyLinked = document.getElementById("filter-shopify-linked");
+  const filterShopifyNotLinked = document.getElementById("filter-shopify-not-linked");
+  if (filter3mfOnly) filter3mfOnly.checked = false;
+  if (filterShopifyLinked) filterShopifyLinked.checked = false;
+  if (filterShopifyNotLinked) filterShopifyNotLinked.checked = false;
   if (typeof window.queryBuilderClearAllMultiChips === "function") {
     window.queryBuilderClearAllMultiChips();
   }
@@ -798,14 +813,42 @@ async function initializeCombinedSearch() {
     'filetype-select'
   ];
 
-  // Remove any existing event listeners first
+  // Quick filter checkboxes
+  const quickFilterCheckboxes = [
+    'filter-3mf-only',
+    'filter-shopify-linked',
+    'filter-shopify-not-linked'
+  ];
+
+  // Remove any existing event listeners first, preserving values
   filterElements.forEach(elementId => {
     const element = document.getElementById(elementId);
     if (element) {
+      const currentValue = element.value;
       const newElement = element.cloneNode(true);
       element.parentNode.replaceChild(newElement, element);
+      // Restore the value after cloning
+      newElement.value = currentValue;
     }
   });
+
+  // Load saved file type preference or default to '3mf'
+  const fileTypeSelect = document.getElementById('filetype-select');
+  if (fileTypeSelect) {
+    const savedFileType = await window.electron.getSetting('fileTypeFilter');
+    if (savedFileType !== null && savedFileType !== undefined) {
+      fileTypeSelect.value = savedFileType;
+    } else if (!fileTypeSelect.value) {
+      // Default to 3MF if no saved preference and no current value
+      fileTypeSelect.value = '3mf';
+    }
+
+    // Sync the 3MF Only checkbox with the dropdown value
+    const filter3mfCheckbox = document.getElementById('filter-3mf-only');
+    if (filter3mfCheckbox) {
+      filter3mfCheckbox.checked = fileTypeSelect.value === '3mf';
+    }
+  }
 
   // Handle sort-select separately
   const sortSelect = document.getElementById('sort-select');
@@ -930,6 +973,20 @@ async function initializeCombinedSearch() {
 
         console.log(`Filter changed: ${elementId} = ${e.target.value}`);
 
+        // Save file type preference when changed and sync checkbox
+        if (elementId === 'filetype-select') {
+          try {
+            await window.electron.saveSetting('fileTypeFilter', e.target.value);
+          } catch (error) {
+            console.error('Error saving file type preference:', error);
+          }
+          // Sync the 3MF Only checkbox
+          const filter3mfCheckbox = document.getElementById('filter-3mf-only');
+          if (filter3mfCheckbox) {
+            filter3mfCheckbox.checked = e.target.value === '3mf';
+          }
+        }
+
         let consumedAwaitingFilter = false;
         if (
           elementId !== "tag-filter" &&
@@ -961,6 +1018,39 @@ async function initializeCombinedSearch() {
         
         // DO NOT clear search input - preserve the search term
         // Clear selection + Model Details synchronously before await (renderer.js state; avoids stale sidebar)
+        if (typeof window.resetFilterSelectionAndDetails === 'function') {
+          window.resetFilterSelectionAndDetails();
+        }
+        await performCombinedSearch();
+      });
+    }
+  });
+
+  // Add event listeners for quick filter checkboxes
+  quickFilterCheckboxes.forEach(checkboxId => {
+    const checkbox = document.getElementById(checkboxId);
+    if (checkbox) {
+      checkbox.addEventListener('change', async (e) => {
+        // Handle mutual exclusivity for Shopify filters
+        if (checkboxId === 'filter-shopify-linked' && e.target.checked) {
+          const notLinked = document.getElementById('filter-shopify-not-linked');
+          if (notLinked) notLinked.checked = false;
+        } else if (checkboxId === 'filter-shopify-not-linked' && e.target.checked) {
+          const linked = document.getElementById('filter-shopify-linked');
+          if (linked) linked.checked = false;
+        }
+
+        // Sync 3MF checkbox with the filetype dropdown
+        if (checkboxId === 'filter-3mf-only') {
+          const filetypeSelect = document.getElementById('filetype-select');
+          if (filetypeSelect) {
+            filetypeSelect.value = e.target.checked ? '3mf' : '';
+          }
+        }
+
+        // Reset the viewingEntireLibrary flag when filters are applied
+        window.viewingEntireLibrary = false;
+
         if (typeof window.resetFilterSelectionAndDetails === 'function') {
           window.resetFilterSelectionAndDetails();
         }
@@ -1112,6 +1202,9 @@ function toggleFilterControls(enabled) {
     'tag-filter',
     'filament-filter',
     'filetype-select',
+    'filter-3mf-only',
+    'filter-shopify-linked',
+    'filter-shopify-not-linked',
     'folder-select',
     'sort-select',
     'search-filter-input',

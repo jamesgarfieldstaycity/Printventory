@@ -2777,9 +2777,22 @@ const MODEL_LIST_THUMB_FLAGS =
 const MODEL_LIST_THUMB_FLAGS_QUALIFIED =
   "CASE WHEN models.thumbnail IS NOT NULL AND models.thumbnail != '' AND models.thumbnail != '3d.png' THEN 1 ELSE 0 END AS hasThumbnail, " +
   "CASE WHEN models.thumbnail IS NOT NULL AND INSTR(models.thumbnail, '::') > 0 THEN 1 ELSE 0 END AS hasMultipleThumbnails";
-const MODEL_LIST_COLUMNS = `${MODEL_DETAIL_COLUMNS}, ${MODEL_LIST_THUMB_FLAGS}`;
+
+/** Shopify linked flag - checks direct model_id, legacy junction table, and folder-based linking */
+const SHOPIFY_LINKED_FLAG =
+  "CASE WHEN EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.model_id = id) " +
+  "OR EXISTS (SELECT 1 FROM shopify_product_models spm WHERE spm.model_id = id) " +
+  "OR EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.folder_path IS NOT NULL AND sp.folder_path != '' AND REPLACE(filePath, CHAR(92), '/') LIKE sp.folder_path || '/%') " +
+  "THEN 1 ELSE 0 END AS shopifyLinked";
+const SHOPIFY_LINKED_FLAG_QUALIFIED =
+  "CASE WHEN EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.model_id = models.id) " +
+  "OR EXISTS (SELECT 1 FROM shopify_product_models spm WHERE spm.model_id = models.id) " +
+  "OR EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.folder_path IS NOT NULL AND sp.folder_path != '' AND REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%') " +
+  "THEN 1 ELSE 0 END AS shopifyLinked";
+
+const MODEL_LIST_COLUMNS = `${MODEL_DETAIL_COLUMNS}, ${MODEL_LIST_THUMB_FLAGS}, ${SHOPIFY_LINKED_FLAG}`;
 const MODEL_LIST_COLUMNS_QUALIFIED =
-  `models.id, models.filePath, models.fileName, models.designer, models.source, models.notes, models.printed, models.print_status, models.print_count, models.last_printed_at, models.parentModel, models.hash, models.size, models.license, models.modifiedDate, models.dateAdded, models.isNew, models.rating, models.favorite, models.bundleKey, models.bundleLabel, models.bundleKind, ${MODEL_LIST_THUMB_FLAGS_QUALIFIED}`;
+  `models.id, models.filePath, models.fileName, models.designer, models.source, models.notes, models.printed, models.print_status, models.print_count, models.last_printed_at, models.parentModel, models.hash, models.size, models.license, models.modifiedDate, models.dateAdded, models.isNew, models.rating, models.favorite, models.bundleKey, models.bundleLabel, models.bundleKind, ${MODEL_LIST_THUMB_FLAGS_QUALIFIED}, ${SHOPIFY_LINKED_FLAG_QUALIFIED}`;
 
 function applyThumbnailFlags(row) {
   if (!row) return row;
@@ -3359,6 +3372,16 @@ function initializeDatabase() {
           name TEXT NOT NULL,
           path TEXT NOT NULL
       )`).run();
+
+      // Create library_folders table for multiple scan directories
+      db.prepare(`CREATE TABLE IF NOT EXISTS library_folders (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          path TEXT NOT NULL UNIQUE,
+          enabled INTEGER DEFAULT 1,
+          auto_scan INTEGER DEFAULT 1,
+          last_scanned DATETIME,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`).run();
       
       // Create indexes for better performance
       db.prepare('CREATE INDEX IF NOT EXISTS idx_models_filepath ON models(filePath)').run();
@@ -3413,6 +3436,7 @@ function initializeDatabase() {
     migrateRatingFavoriteColumns();
     migrateBundleColumns();
     migratePrintLifecycleColumns();
+    migrateLibraryFolders();
     clearFailurePlaceholderThumbnails();
     
     // Create index for dateAdded after migration (in case it was just added)
@@ -3431,7 +3455,8 @@ function initializeDatabase() {
     ensureSlicersTableExists();
     ensureFilamentsTablesExist();
     ensurePartsTablesExist();
-    
+    ensureShopifyTablesExist();
+
     // Initialize default settings
     initializeDefaultSettings();
 
@@ -3606,6 +3631,44 @@ function migrateBundleColumns() {
     return true;
   } catch (error) {
     console.error('Error migrating bundle columns:', error);
+    return false;
+  }
+}
+
+/**
+ * Migrate existing directoryPath setting to the new library_folders table.
+ * This allows supporting multiple library folders while preserving the user's existing path.
+ */
+function migrateLibraryFolders() {
+  try {
+    console.log('Checking for library folders migration...');
+
+    // Check if we already have library folders configured
+    const existingFolders = db.prepare('SELECT COUNT(*) as count FROM library_folders').get();
+    if (existingFolders.count > 0) {
+      console.log('Library folders already configured, skipping migration');
+      return true;
+    }
+
+    // Look for existing directoryPath setting
+    const existingPath = db.prepare('SELECT value FROM settings WHERE key = ?').get('directoryPath');
+    if (existingPath && existingPath.value && existingPath.value.trim()) {
+      const path = existingPath.value.trim();
+      console.log(`Migrating existing directoryPath to library_folders: ${path}`);
+
+      db.prepare(`
+        INSERT INTO library_folders (path, enabled, auto_scan)
+        VALUES (?, 1, 1)
+      `).run(path);
+
+      console.log('Library folder migration complete');
+    } else {
+      console.log('No existing directoryPath to migrate');
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error migrating library folders:', error);
     return false;
   }
 }
@@ -3821,6 +3884,11 @@ function initializeDefaultSettings() {
       { key: 'tlsAgreeTos', value: '0' },
       { key: 'tlsUseStaging', value: '0' },
       { key: 'tlsRedirectHttp', value: '0' },
+      // Shopify integration settings
+      { key: 'shopifyStoreDomain', value: '' },
+      { key: 'shopifyClientId', value: '' },
+      { key: 'shopifyClientSecret', value: '' },
+      { key: 'shopifyApiVersion', value: '2024-10' },
     ];
     
     // Insert default settings if they don't exist
@@ -3905,6 +3973,41 @@ async function createWindow() {
       ]
     },
     {
+      label: 'View',
+      submenu: [
+        {
+          id: 'filters-pane-toggle',
+          label: 'Filters Pane',
+          type: 'checkbox',
+          checked: true,
+          accelerator: 'CmdOrCtrl+Shift+F',
+          click: (menuItem) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('toggle-filters-pane');
+            }
+          }
+        },
+        {
+          id: 'sidebar-toggle',
+          label: 'Sidebar',
+          type: 'checkbox',
+          checked: false,
+          accelerator: 'CmdOrCtrl+Shift+S',
+          click: (menuItem) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('toggle-sidebar');
+            }
+          }
+        },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
+    {
       label: 'Settings',
       submenu: [
         {
@@ -3974,6 +4077,14 @@ async function createWindow() {
               }
             }
           ]
+        },
+        {
+          label: 'Shopify',
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('open-shopify-settings');
+            }
+          }
         },
         { type: 'separator' },
         {
@@ -4223,6 +4334,41 @@ function createApplicationMenu() {
       ]
     },
     {
+      label: 'View',
+      submenu: [
+        {
+          id: 'filters-pane-toggle',
+          label: 'Filters Pane',
+          type: 'checkbox',
+          checked: true,
+          accelerator: 'CmdOrCtrl+Shift+F',
+          click: (menuItem) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('toggle-filters-pane');
+            }
+          }
+        },
+        {
+          id: 'sidebar-toggle',
+          label: 'Sidebar',
+          type: 'checkbox',
+          checked: false,
+          accelerator: 'CmdOrCtrl+Shift+S',
+          click: (menuItem) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('toggle-sidebar');
+            }
+          }
+        },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
+    {
       label: 'Settings',
       submenu: [
         {
@@ -4288,6 +4434,14 @@ function createApplicationMenu() {
               }
             }
           ]
+        },
+        {
+          label: 'Shopify',
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('open-shopify-settings');
+            }
+          }
         },
         { type: 'separator' },
         {
@@ -4458,8 +4612,8 @@ ipcMain.handle('load-directory', async () => {
 ipcMain.handle('save-directory', async (event, directoryPath) => {
   try {
     db.prepare(`
-      INSERT INTO settings (key, value) 
-      VALUES (?, ?) 
+      INSERT INTO settings (key, value)
+      VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `).run('directoryPath', directoryPath);
     return true;
@@ -4469,15 +4623,135 @@ ipcMain.handle('save-directory', async (event, directoryPath) => {
   }
 });
 
-ipcMain.handle('open-file-dialog', async () => {
+// Library folders management
+ipcMain.handle('get-library-folders', async () => {
+  try {
+    const folders = db.prepare(`
+      SELECT id, path, enabled, auto_scan, last_scanned, created_at
+      FROM library_folders
+      ORDER BY created_at ASC
+    `).all();
+    return folders;
+  } catch (error) {
+    console.error('Error getting library folders:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('add-library-folder', async (event, path) => {
+  try {
+    // Normalize path for consistency
+    const normalizedPath = path.replace(/\\/g, '/').replace(/\/+$/, '');
+
+    // Check if path already exists
+    const existing = db.prepare('SELECT id FROM library_folders WHERE path = ?').get(normalizedPath);
+    if (existing) {
+      throw new Error('This folder is already in your library');
+    }
+
+    const result = db.prepare(`
+      INSERT INTO library_folders (path, enabled, auto_scan)
+      VALUES (?, 1, 1)
+    `).run(normalizedPath);
+
+    // Also update the legacy directoryPath setting to the first folder (for compatibility)
+    const firstFolder = db.prepare('SELECT path FROM library_folders ORDER BY created_at ASC LIMIT 1').get();
+    if (firstFolder) {
+      db.prepare(`
+        INSERT INTO settings (key, value)
+        VALUES ('directoryPath', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `).run(firstFolder.path);
+    }
+
+    return { id: result.lastInsertRowid, path: normalizedPath, enabled: 1, auto_scan: 1 };
+  } catch (error) {
+    console.error('Error adding library folder:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('update-library-folder', async (event, { id, enabled, auto_scan }) => {
+  try {
+    db.prepare(`
+      UPDATE library_folders
+      SET enabled = ?, auto_scan = ?
+      WHERE id = ?
+    `).run(enabled ? 1 : 0, auto_scan ? 1 : 0, id);
+    return true;
+  } catch (error) {
+    console.error('Error updating library folder:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('remove-library-folder', async (event, id) => {
+  try {
+    db.prepare('DELETE FROM library_folders WHERE id = ?').run(id);
+
+    // Update legacy directoryPath to first remaining folder
+    const firstFolder = db.prepare('SELECT path FROM library_folders ORDER BY created_at ASC LIMIT 1').get();
+    if (firstFolder) {
+      db.prepare(`
+        INSERT INTO settings (key, value)
+        VALUES ('directoryPath', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+      `).run(firstFolder.path);
+    } else {
+      // No folders left, clear the legacy setting
+      db.prepare('DELETE FROM settings WHERE key = ?').run('directoryPath');
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error removing library folder:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('update-library-folder-scan-time', async (event, id) => {
+  try {
+    db.prepare(`
+      UPDATE library_folders
+      SET last_scanned = datetime('now')
+      WHERE id = ?
+    `).run(id);
+    return true;
+  } catch (error) {
+    console.error('Error updating library folder scan time:', error);
+    throw error;
+  }
+});
+
+ipcMain.handle('open-file-dialog', async (event, defaultPath) => {
   // Test mode: use fixed path so Playwright/Cline can run scan without native dialog (desktop: C:\temp, server/docker: /test)
   const testPath = process.env.PRINTVENTORY_TEST_SCAN_PATH;
   if (testPath && typeof testPath === 'string') {
     return [testPath];
   }
-  const result = await dialog.showOpenDialog(mainWindow, {
+
+  // Determine starting path: use provided default, or fall back to most recent library folder
+  let startPath = defaultPath;
+  if (!startPath) {
+    try {
+      const recentFolder = db.prepare(`
+        SELECT path FROM library_folders
+        WHERE enabled = 1
+        ORDER BY last_scanned DESC NULLS LAST, created_at DESC
+        LIMIT 1
+      `).get();
+      if (recentFolder) startPath = recentFolder.path;
+    } catch (_) { /* ignore */ }
+  }
+
+  const dialogOptions = {
     properties: ['openDirectory']
-  });
+  };
+  if (startPath) {
+    dialogOptions.defaultPath = startPath;
+  }
+
+  const result = await dialog.showOpenDialog(mainWindow, dialogOptions);
   if (result.canceled) {
     return null;
   } else {
@@ -5260,6 +5534,22 @@ ipcMain.handle('get-licenses', async () => {
   }
 });
 
+ipcMain.handle('set-parent-model-batch', async (event, filePaths, parentModel) => {
+  try {
+    const value = parentModel && String(parentModel).trim() !== '' ? parentModel.trim() : null;
+    db.transaction(() => {
+      filePaths.forEach(fp => {
+        db.prepare('UPDATE models SET parentModel = ? WHERE filePath = ?').run(value, fp);
+      });
+    })();
+    console.log(`[Parent Model] Set parentModel to "${value || '(null)'}" for ${filePaths.length} model(s)`);
+    return { success: true, count: filePaths.length };
+  } catch (error) {
+    console.error('Error setting parent model batch:', error);
+    throw error;
+  }
+});
+
 ipcMain.handle('get-models-by-designer', async (event, designer) => {
   try {
     const rows = db.prepare(`
@@ -5941,7 +6231,36 @@ function buildModelFilterConditions(filters) {
         }
       }
     }
-    
+
+    // Shopify filter - linked or not-linked
+    // Check three linking methods:
+    // 1. Direct model_id link in shopify_products
+    // 2. Legacy shopify_product_models junction table
+    // 3. Folder-based linking where model's filePath starts with shopify_products.folder_path/
+    if (filters.shopifyFilter === 'linked') {
+      conditions.push(`(
+        EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.model_id = models.id)
+        OR EXISTS (SELECT 1 FROM shopify_product_models spm WHERE spm.model_id = models.id)
+        OR EXISTS (
+          SELECT 1 FROM shopify_products sp
+          WHERE sp.folder_path IS NOT NULL
+          AND sp.folder_path != ''
+          AND REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%'
+        )
+      )`);
+    } else if (filters.shopifyFilter === 'not-linked') {
+      conditions.push(`(
+        NOT EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.model_id = models.id)
+        AND NOT EXISTS (SELECT 1 FROM shopify_product_models spm WHERE spm.model_id = models.id)
+        AND NOT EXISTS (
+          SELECT 1 FROM shopify_products sp
+          WHERE sp.folder_path IS NOT NULL
+          AND sp.folder_path != ''
+          AND REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%'
+        )
+      )`);
+    }
+
     // Directory filter
     if (filters.directory) {
       // Ensure the directory path ends with a separator to match only files within that directory
@@ -6633,6 +6952,1728 @@ async function syncSpoolmanFilamentsHandler(event, url, token) {
   return { success: true, total: remote.length, created, updated };
 }
 ipcMain.handle('sync-spoolman-filaments', syncSpoolmanFilamentsHandler);
+
+// ============================================================================
+// Shopify Integration Handlers
+// ============================================================================
+
+/**
+ * Read Shopify settings from database, with optional overrides.
+ */
+function readShopifySettings(overrides = {}) {
+  const domainRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('shopifyStoreDomain');
+  const clientIdRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('shopifyClientId');
+  const clientSecretRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('shopifyClientSecret');
+  const versionRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('shopifyApiVersion');
+  return {
+    storeDomain: (overrides.storeDomain ?? domainRow?.value ?? '').trim(),
+    clientId: (overrides.clientId ?? clientIdRow?.value ?? '').trim(),
+    clientSecret: (overrides.clientSecret ?? clientSecretRow?.value ?? '').trim(),
+    apiVersion: overrides.apiVersion ?? (versionRow?.value || '2024-10')
+  };
+}
+
+/**
+ * Get all Shopify settings (without exposing the client secret).
+ */
+async function getShopifySettingsHandler(event) {
+  try {
+    const settings = readShopifySettings();
+    return {
+      storeDomain: settings.storeDomain,
+      clientId: settings.clientId,
+      clientSecret: settings.clientSecret ? '********' : '', // Mask the secret
+      apiVersion: settings.apiVersion,
+      hasCredentials: !!(settings.clientId && settings.clientSecret)
+    };
+  } catch (error) {
+    console.error('Error getting Shopify settings:', error);
+    throw error;
+  }
+}
+ipcMain.handle('get-shopify-settings', getShopifySettingsHandler);
+ipcHandlerRegistry.set('get-shopify-settings', getShopifySettingsHandler);
+
+/**
+ * Save Shopify settings.
+ */
+async function saveShopifySettingsHandler(event, settings) {
+  try {
+    const { storeDomain, clientId, clientSecret, apiVersion } = settings;
+
+    if (storeDomain !== undefined) {
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
+        .run('shopifyStoreDomain', String(storeDomain || '').trim());
+    }
+    if (clientId !== undefined) {
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
+        .run('shopifyClientId', String(clientId || '').trim());
+    }
+    // Only update client secret if a new value is provided (not the masked value)
+    if (clientSecret !== undefined && clientSecret !== '********') {
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
+        .run('shopifyClientSecret', String(clientSecret || '').trim());
+    }
+    if (apiVersion !== undefined) {
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
+        .run('shopifyApiVersion', String(apiVersion || '2024-10').trim());
+    }
+
+    // Clear the token cache when credentials change
+    const domain = storeDomain || db.prepare('SELECT value FROM settings WHERE key = ?').get('shopifyStoreDomain')?.value || '';
+    const id = clientId || db.prepare('SELECT value FROM settings WHERE key = ?').get('shopifyClientId')?.value || '';
+    if (domain && id) {
+      shopifyApi.clearTokenCache(domain, id);
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error saving Shopify settings:', error);
+    throw error;
+  }
+}
+ipcMain.handle('save-shopify-settings', saveShopifySettingsHandler);
+ipcHandlerRegistry.set('save-shopify-settings', saveShopifySettingsHandler);
+
+/**
+ * Test Shopify API connection using Client Credentials Grant.
+ */
+async function testShopifyConnectionHandler(event, storeDomain, clientId, clientSecret) {
+  try {
+    // Use provided values or fall back to stored settings
+    const settings = readShopifySettings({ storeDomain, clientId, clientSecret });
+
+    if (!settings.storeDomain) {
+      throw new Error('Store domain is required (must be *.myshopify.com domain)');
+    }
+    if (!settings.clientId) {
+      throw new Error('Client ID is required');
+    }
+    if (!settings.clientSecret) {
+      throw new Error('Client Secret is required');
+    }
+
+    // Validate the domain format
+    if (!settings.storeDomain.endsWith('.myshopify.com')) {
+      throw new Error(`Store domain must be a *.myshopify.com domain, got: ${settings.storeDomain}`);
+    }
+
+    console.log('[Shopify Test] Testing connection with Client Credentials Grant...');
+    console.log('[Shopify Test] Store domain:', settings.storeDomain);
+    console.log('[Shopify Test] Client ID:', settings.clientId);
+
+    // Use the shopify.js module which handles Client Credentials Grant
+    const result = await shopifyApi.testConnection(
+      settings.storeDomain,
+      settings.clientId,
+      settings.clientSecret
+    );
+
+    return {
+      success: true,
+      shopName: result.shopName,
+      currency: result.currency
+    };
+  } catch (error) {
+    console.error('Error testing Shopify connection:', error);
+    throw error;
+  }
+}
+ipcMain.handle('test-shopify-connection', testShopifyConnectionHandler);
+ipcHandlerRegistry.set('test-shopify-connection', testShopifyConnectionHandler);
+
+// ----------------------------------------------------------------------------
+// Shopify Product Types CRUD
+// ----------------------------------------------------------------------------
+
+/**
+ * Get all product types.
+ */
+async function getShopifyProductTypesHandler(event) {
+  try {
+    const types = db.prepare('SELECT id, code, name, created_at FROM shopify_product_types ORDER BY name').all();
+    return types;
+  } catch (error) {
+    console.error('Error getting Shopify product types:', error);
+    throw error;
+  }
+}
+ipcMain.handle('get-shopify-product-types', getShopifyProductTypesHandler);
+ipcHandlerRegistry.set('get-shopify-product-types', getShopifyProductTypesHandler);
+
+/**
+ * Save (create or update) a product type.
+ */
+async function saveShopifyProductTypeHandler(event, productType) {
+  try {
+    const { id, code, name } = productType;
+    const codeUpper = (code || '').toUpperCase().trim();
+    const nameTrimmed = (name || '').trim();
+
+    if (!codeUpper || !nameTrimmed) {
+      throw new Error('Code and name are required');
+    }
+
+    if (id) {
+      // Update existing
+      db.prepare('UPDATE shopify_product_types SET code = ?, name = ? WHERE id = ?')
+        .run(codeUpper, nameTrimmed, id);
+      return { id, code: codeUpper, name: nameTrimmed };
+    } else {
+      // Create new
+      const result = db.prepare('INSERT INTO shopify_product_types (code, name) VALUES (?, ?)')
+        .run(codeUpper, nameTrimmed);
+      return { id: result.lastInsertRowid, code: codeUpper, name: nameTrimmed };
+    }
+  } catch (error) {
+    console.error('Error saving Shopify product type:', error);
+    throw error;
+  }
+}
+ipcMain.handle('save-shopify-product-type', saveShopifyProductTypeHandler);
+ipcHandlerRegistry.set('save-shopify-product-type', saveShopifyProductTypeHandler);
+
+/**
+ * Delete a product type (if not in use).
+ */
+async function deleteShopifyProductTypeHandler(event, typeId) {
+  try {
+    // Check if in use
+    const inUse = db.prepare('SELECT COUNT(*) as count FROM shopify_products WHERE type_code = (SELECT code FROM shopify_product_types WHERE id = ?)')
+      .get(typeId);
+    if (inUse && inUse.count > 0) {
+      throw new Error('Cannot delete product type that is in use');
+    }
+    db.prepare('DELETE FROM shopify_product_types WHERE id = ?').run(typeId);
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting Shopify product type:', error);
+    throw error;
+  }
+}
+ipcMain.handle('delete-shopify-product-type', deleteShopifyProductTypeHandler);
+ipcHandlerRegistry.set('delete-shopify-product-type', deleteShopifyProductTypeHandler);
+
+// ----------------------------------------------------------------------------
+// Shopify Collection Codes CRUD
+// ----------------------------------------------------------------------------
+
+/**
+ * Get all collection codes.
+ */
+async function getShopifyCollectionCodesHandler(event) {
+  try {
+    const codes = db.prepare('SELECT id, code, name, created_at FROM shopify_collection_codes ORDER BY name').all();
+    return codes;
+  } catch (error) {
+    console.error('Error getting Shopify collection codes:', error);
+    throw error;
+  }
+}
+ipcMain.handle('get-shopify-collection-codes', getShopifyCollectionCodesHandler);
+ipcHandlerRegistry.set('get-shopify-collection-codes', getShopifyCollectionCodesHandler);
+
+/**
+ * Suggest a collection code based on folder name.
+ * Returns a suggested 3-letter code and validates uniqueness.
+ */
+async function suggestShopifyCollectionCodeHandler(event, folderName) {
+  try {
+    const name = (folderName || '').trim();
+    if (!name) {
+      return { suggestedCode: '', isUnique: false };
+    }
+
+    // Generate a 3-letter code from the folder name
+    // First try first 3 letters
+    let suggestedCode = name.substring(0, 3).toUpperCase().replace(/[^A-Z]/g, '');
+
+    // If we don't have 3 letters, try to extract consonants or pad with X
+    if (suggestedCode.length < 3) {
+      const consonants = name.toUpperCase().replace(/[^BCDFGHJKLMNPQRSTVWXYZ]/g, '');
+      const vowels = name.toUpperCase().replace(/[^AEIOU]/g, '');
+      suggestedCode = (consonants + vowels + 'XXX').substring(0, 3);
+    }
+
+    // Check if this code is unique
+    const existing = db.prepare('SELECT code FROM shopify_collection_codes WHERE code = ?').get(suggestedCode);
+    const isUnique = !existing;
+
+    return { suggestedCode, isUnique, name };
+  } catch (error) {
+    console.error('Error suggesting collection code:', error);
+    throw error;
+  }
+}
+ipcMain.handle('suggest-shopify-collection-code', suggestShopifyCollectionCodeHandler);
+ipcHandlerRegistry.set('suggest-shopify-collection-code', suggestShopifyCollectionCodeHandler);
+
+/**
+ * Save (create or update) a collection code.
+ */
+async function saveShopifyCollectionCodeHandler(event, collectionCode) {
+  try {
+    const { id, code, name } = collectionCode;
+    const codeUpper = (code || '').toUpperCase().trim();
+    const nameTrimmed = (name || '').trim();
+
+    if (!codeUpper || !nameTrimmed) {
+      throw new Error('Code and name are required');
+    }
+
+    if (id) {
+      // Update existing
+      db.prepare('UPDATE shopify_collection_codes SET code = ?, name = ? WHERE id = ?')
+        .run(codeUpper, nameTrimmed, id);
+      return { id, code: codeUpper, name: nameTrimmed };
+    } else {
+      // Create new
+      const result = db.prepare('INSERT INTO shopify_collection_codes (code, name) VALUES (?, ?)')
+        .run(codeUpper, nameTrimmed);
+      return { id: result.lastInsertRowid, code: codeUpper, name: nameTrimmed };
+    }
+  } catch (error) {
+    console.error('Error saving Shopify collection code:', error);
+    throw error;
+  }
+}
+ipcMain.handle('save-shopify-collection-code', saveShopifyCollectionCodeHandler);
+ipcHandlerRegistry.set('save-shopify-collection-code', saveShopifyCollectionCodeHandler);
+
+/**
+ * Delete a collection code (if not in use).
+ */
+async function deleteShopifyCollectionCodeHandler(event, codeId) {
+  try {
+    // Check if in use
+    const inUse = db.prepare('SELECT COUNT(*) as count FROM shopify_products WHERE collection_code = (SELECT code FROM shopify_collection_codes WHERE id = ?)')
+      .get(codeId);
+    if (inUse && inUse.count > 0) {
+      throw new Error('Cannot delete collection code that is in use');
+    }
+    db.prepare('DELETE FROM shopify_collection_codes WHERE id = ?').run(codeId);
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting Shopify collection code:', error);
+    throw error;
+  }
+}
+ipcMain.handle('delete-shopify-collection-code', deleteShopifyCollectionCodeHandler);
+ipcHandlerRegistry.set('delete-shopify-collection-code', deleteShopifyCollectionCodeHandler);
+
+// ----------------------------------------------------------------------------
+// Shopify Products CRUD
+// ----------------------------------------------------------------------------
+
+/**
+ * Get all Shopify products with optional filters.
+ */
+async function getShopifyProductsHandler(event, filters = {}) {
+  try {
+    let query = `
+      SELECT sp.*,
+             GROUP_CONCAT(DISTINCT spm.model_id) as model_ids
+      FROM shopify_products sp
+      LEFT JOIN shopify_product_models spm ON sp.id = spm.shopify_product_id
+    `;
+    const params = [];
+    const conditions = [];
+
+    if (filters.push_status) {
+      conditions.push('sp.push_status = ?');
+      params.push(filters.push_status);
+    }
+
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+
+    query += ' GROUP BY sp.id ORDER BY sp.created_at DESC';
+
+    const products = db.prepare(query).all(...params);
+    return products.map(p => ({
+      ...p,
+      model_ids: p.model_ids ? p.model_ids.split(',').map(Number) : []
+    }));
+  } catch (error) {
+    console.error('Error getting Shopify products:', error);
+    throw error;
+  }
+}
+ipcMain.handle('get-shopify-products', getShopifyProductsHandler);
+ipcHandlerRegistry.set('get-shopify-products', getShopifyProductsHandler);
+
+/**
+ * Get a single Shopify product by ID.
+ */
+async function getShopifyProductHandler(event, productId) {
+  try {
+    const product = db.prepare(`
+      SELECT sp.*,
+             GROUP_CONCAT(DISTINCT spm.model_id) as model_ids
+      FROM shopify_products sp
+      LEFT JOIN shopify_product_models spm ON sp.id = spm.shopify_product_id
+      WHERE sp.id = ?
+      GROUP BY sp.id
+    `).get(productId);
+
+    if (!product) return null;
+
+    return {
+      ...product,
+      model_ids: product.model_ids ? product.model_ids.split(',').map(Number) : []
+    };
+  } catch (error) {
+    console.error('Error getting Shopify product:', error);
+    throw error;
+  }
+}
+ipcMain.handle('get-shopify-product', getShopifyProductHandler);
+ipcHandlerRegistry.set('get-shopify-product', getShopifyProductHandler);
+
+/**
+ * Get Shopify product by linked model ID.
+ * Checks both the legacy shopify_product_models table and the new folder-based shopify_products.model_id.
+ */
+async function getShopifyProductByModelHandler(event, modelId) {
+  try {
+    // First check folder-based linking (shopify_products.model_id)
+    const folderBased = db.prepare(`
+      SELECT * FROM shopify_products WHERE model_id = ?
+    `).get(modelId);
+    if (folderBased) {
+      return folderBased;
+    }
+
+    // Fall back to legacy shopify_product_models table
+    const link = db.prepare('SELECT shopify_product_id FROM shopify_product_models WHERE model_id = ?').get(modelId);
+    if (!link) return null;
+    return await getShopifyProductHandler(event, link.shopify_product_id);
+  } catch (error) {
+    console.error('Error getting Shopify product by model:', error);
+    throw error;
+  }
+}
+ipcMain.handle('get-shopify-product-by-model', getShopifyProductByModelHandler);
+ipcHandlerRegistry.set('get-shopify-product-by-model', getShopifyProductByModelHandler);
+
+/**
+ * Fetch live Shopify data for a linked product.
+ * Returns current Shopify data including title, description, tags, price, and all variants.
+ */
+async function fetchLiveShopifyDataHandler(event, localProductId) {
+  try {
+    const product = db.prepare('SELECT * FROM shopify_products WHERE id = ?').get(localProductId);
+    if (!product) {
+      throw new Error('Local product not found');
+    }
+
+    if (!product.shopify_product_id) {
+      throw new Error('Product is not linked to Shopify');
+    }
+
+    const settings = readShopifySettings();
+    if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
+      throw new Error('Shopify credentials not configured');
+    }
+
+    console.log('[Shopify] Fetching live data for product:', product.shopify_product_id);
+    const shopifyData = await shopifyApi.fetchProductWithVariants(
+      settings.storeDomain,
+      settings.clientId,
+      settings.clientSecret,
+      product.shopify_product_id
+    );
+
+    return {
+      localProduct: product,
+      shopifyData: shopifyData
+    };
+  } catch (error) {
+    console.error('Error fetching live Shopify data:', error);
+    throw error;
+  }
+}
+ipcMain.handle('fetch-live-shopify-data', fetchLiveShopifyDataHandler);
+ipcHandlerRegistry.set('fetch-live-shopify-data', fetchLiveShopifyDataHandler);
+
+/**
+ * Update a linked Shopify product with new data.
+ * Pushes changes to title, description, and variant prices/SKUs back to Shopify.
+ */
+async function updateLinkedShopifyProductHandler(event, localProductId, updates) {
+  try {
+    const product = db.prepare('SELECT * FROM shopify_products WHERE id = ?').get(localProductId);
+    if (!product) {
+      throw new Error('Local product not found');
+    }
+
+    if (!product.shopify_product_id) {
+      throw new Error('Product is not linked to Shopify');
+    }
+
+    const settings = readShopifySettings();
+    if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
+      throw new Error('Shopify credentials not configured');
+    }
+
+    console.log('[Shopify] Updating linked product:', product.shopify_product_id);
+
+    // Update the product (title, description, tags, SEO)
+    await shopifyApi.updateProduct(
+      settings.storeDomain,
+      settings.clientId,
+      settings.clientSecret,
+      product.shopify_product_id,
+      {
+        title: updates.title,
+        description: updates.description,
+        licensor_collection: updates.vendor,
+        tags: updates.tags || [],
+        seo: updates.seo || null
+      }
+    );
+
+    // Update variants if provided (using bulk update API)
+    if (updates.variants && Array.isArray(updates.variants)) {
+      const variantsToUpdate = updates.variants
+        .filter(v => v.id)
+        .map(v => ({
+          id: v.id,
+          price: v.price,
+          sku: v.sku
+        }));
+
+      if (variantsToUpdate.length > 0) {
+        await shopifyApi.updateVariantsBulk(
+          settings.storeDomain,
+          settings.clientId,
+          settings.clientSecret,
+          product.shopify_product_id,
+          variantsToUpdate
+        );
+      }
+    }
+
+    // Update local record with new title/description
+    db.prepare(`
+      UPDATE shopify_products SET
+        title = ?,
+        description = ?,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `).run(updates.title, updates.description, localProductId);
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error updating linked Shopify product:', error);
+    throw error;
+  }
+}
+ipcMain.handle('update-linked-shopify-product', updateLinkedShopifyProductHandler);
+ipcHandlerRegistry.set('update-linked-shopify-product', updateLinkedShopifyProductHandler);
+
+/**
+ * Delete media from a Shopify product.
+ */
+async function deleteShopifyProductMediaHandler(event, shopifyProductId, mediaIds) {
+  try {
+    const settings = readShopifySettings();
+    if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
+      throw new Error('Shopify credentials not configured');
+    }
+
+    console.log('[Shopify] Deleting media from product:', shopifyProductId);
+    const result = await shopifyApi.deleteProductMedia(
+      settings.storeDomain,
+      settings.clientId,
+      settings.clientSecret,
+      shopifyProductId,
+      mediaIds
+    );
+
+    return result;
+  } catch (error) {
+    console.error('Error deleting Shopify media:', error);
+    throw error;
+  }
+}
+ipcMain.handle('delete-shopify-product-media', deleteShopifyProductMediaHandler);
+ipcHandlerRegistry.set('delete-shopify-product-media', deleteShopifyProductMediaHandler);
+
+/**
+ * Upload images to a Shopify product.
+ */
+async function uploadShopifyProductImagesHandler(event, shopifyProductId, images) {
+  try {
+    const settings = readShopifySettings();
+    if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
+      throw new Error('Shopify credentials not configured');
+    }
+
+    console.log('[Shopify] Uploading images to product:', shopifyProductId);
+
+    // Read image data from paths
+    const imageData = [];
+    for (const img of images) {
+      const fs = require('fs');
+      const path = require('path');
+      const data = fs.readFileSync(img.path);
+      const ext = path.extname(img.filename).toLowerCase();
+      const mimeTypes = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp'
+      };
+      imageData.push({
+        filename: img.filename,
+        data: data,
+        mimeType: mimeTypes[ext] || 'image/jpeg',
+        alt: img.alt || ''
+      });
+    }
+
+    const result = await shopifyApi.uploadProductImages(
+      settings.storeDomain,
+      settings.clientId,
+      settings.clientSecret,
+      shopifyProductId,
+      imageData
+    );
+
+    return result;
+  } catch (error) {
+    console.error('Error uploading Shopify images:', error);
+    throw error;
+  }
+}
+ipcMain.handle('upload-shopify-product-images', uploadShopifyProductImagesHandler);
+ipcHandlerRegistry.set('upload-shopify-product-images', uploadShopifyProductImagesHandler);
+
+/**
+ * Reorder media on a Shopify product.
+ */
+async function reorderShopifyProductMediaHandler(event, shopifyProductId, moves) {
+  try {
+    const settings = readShopifySettings();
+    if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
+      throw new Error('Shopify credentials not configured');
+    }
+
+    console.log('[Shopify] Reordering media on product:', shopifyProductId);
+    const result = await shopifyApi.reorderProductMedia(
+      settings.storeDomain,
+      settings.clientId,
+      settings.clientSecret,
+      shopifyProductId,
+      moves
+    );
+
+    return result;
+  } catch (error) {
+    console.error('Error reordering Shopify media:', error);
+    throw error;
+  }
+}
+ipcMain.handle('reorder-shopify-product-media', reorderShopifyProductMediaHandler);
+ipcHandlerRegistry.set('reorder-shopify-product-media', reorderShopifyProductMediaHandler);
+
+/**
+ * Set inventory quantities for Shopify variants.
+ * Uses inventorySetQuantities mutation (2024-10 API).
+ */
+async function setShopifyInventoryHandler(event, updates) {
+  try {
+    const storeDomain = getSettingValueOr('shopifyStoreDomain', '');
+    const clientId = getSettingValueOr('shopifyClientId', '');
+    const clientSecret = getSettingValueOr('shopifyClientSecret', '');
+
+    if (!storeDomain || !clientId || !clientSecret) {
+      throw new Error('Shopify API credentials not configured');
+    }
+
+    // updates is an array of { variantId, quantity }
+    const result = await shopifyApi.setInventoryQuantities(storeDomain, clientId, clientSecret, updates);
+
+    return result;
+  } catch (error) {
+    console.error('[Shopify] Error setting inventory:', error);
+    throw error;
+  }
+}
+ipcMain.handle('set-shopify-inventory', setShopifyInventoryHandler);
+ipcHandlerRegistry.set('set-shopify-inventory', setShopifyInventoryHandler);
+
+/**
+ * Save (create or update) a Shopify product.
+ */
+async function saveShopifyProductHandler(event, productData) {
+  try {
+    const {
+      id,
+      collection_code,
+      type_code,
+      product_code,
+      series_number,
+      variant_number,
+      title,
+      description,
+      price,
+      licensor_collection,
+      needs_measurement_review,
+      needs_pricing_review,
+      needs_final_photography,
+      not_approved_for_publishing,
+      photo_order,
+      source_folder,
+      model_id
+    } = productData;
+
+    // Build SKU
+    const sku = `GR-${collection_code}-${type_code}-${product_code}-${String(series_number).padStart(3, '0')}-${String(variant_number || 1).padStart(2, '0')}`;
+
+    if (id) {
+      // Update existing
+      db.prepare(`
+        UPDATE shopify_products SET
+          collection_code = ?,
+          type_code = ?,
+          product_code = ?,
+          series_number = ?,
+          variant_number = ?,
+          sku = ?,
+          title = ?,
+          description = ?,
+          price = ?,
+          licensor_collection = ?,
+          needs_measurement_review = ?,
+          needs_pricing_review = ?,
+          needs_final_photography = ?,
+          not_approved_for_publishing = ?,
+          photo_order = ?,
+          source_folder = ?,
+          updated_at = datetime('now')
+        WHERE id = ?
+      `).run(
+        collection_code, type_code, product_code, series_number, variant_number || 1, sku,
+        title, description, price, licensor_collection,
+        needs_measurement_review ? 1 : 0,
+        needs_pricing_review ? 1 : 0,
+        needs_final_photography ? 1 : 0,
+        not_approved_for_publishing ? 1 : 0,
+        photo_order ? JSON.stringify(photo_order) : null,
+        source_folder,
+        id
+      );
+      return { id, sku };
+    } else {
+      // Create new
+      const result = db.prepare(`
+        INSERT INTO shopify_products (
+          collection_code, type_code, product_code, series_number, variant_number, sku,
+          title, description, price, licensor_collection,
+          needs_measurement_review, needs_pricing_review, needs_final_photography, not_approved_for_publishing,
+          photo_order, source_folder
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        collection_code, type_code, product_code, series_number, variant_number || 1, sku,
+        title, description, price, licensor_collection,
+        needs_measurement_review ? 1 : 0,
+        needs_pricing_review ? 1 : 0,
+        needs_final_photography ? 1 : 0,
+        not_approved_for_publishing ? 1 : 0,
+        photo_order ? JSON.stringify(photo_order) : null,
+        source_folder
+      );
+
+      const newId = result.lastInsertRowid;
+
+      // Link to model if provided
+      if (model_id) {
+        db.prepare('INSERT OR REPLACE INTO shopify_product_models (shopify_product_id, model_id, variant_number) VALUES (?, ?, ?)')
+          .run(newId, model_id, variant_number || 1);
+      }
+
+      return { id: newId, sku };
+    }
+  } catch (error) {
+    console.error('Error saving Shopify product:', error);
+    throw error;
+  }
+}
+ipcMain.handle('save-shopify-product', saveShopifyProductHandler);
+ipcHandlerRegistry.set('save-shopify-product', saveShopifyProductHandler);
+
+/**
+ * Delete a Shopify product (local only).
+ */
+async function deleteShopifyProductHandler(event, productId) {
+  try {
+    db.prepare('DELETE FROM shopify_product_models WHERE shopify_product_id = ?').run(productId);
+    db.prepare('DELETE FROM shopify_products WHERE id = ?').run(productId);
+    return { success: true };
+  } catch (error) {
+    console.error('Error deleting Shopify product:', error);
+    throw error;
+  }
+}
+ipcMain.handle('delete-shopify-product', deleteShopifyProductHandler);
+ipcHandlerRegistry.set('delete-shopify-product', deleteShopifyProductHandler);
+
+/**
+ * Unlink a model from its Shopify product.
+ * This removes the model_id reference but keeps the Shopify product record.
+ */
+async function unlinkShopifyProductHandler(event, modelId) {
+  try {
+    if (!modelId) throw new Error('modelId is required');
+
+    // Remove from legacy junction table
+    db.prepare('DELETE FROM shopify_product_models WHERE model_id = ?').run(modelId);
+
+    // Clear model_id from shopify_products (folder-based link)
+    db.prepare('UPDATE shopify_products SET model_id = NULL WHERE model_id = ?').run(modelId);
+
+    console.log(`[Shopify] Unlinked model ${modelId} from Shopify product`);
+    return { success: true };
+  } catch (error) {
+    console.error('Error unlinking Shopify product:', error);
+    throw error;
+  }
+}
+ipcMain.handle('unlink-shopify-product', unlinkShopifyProductHandler);
+ipcHandlerRegistry.set('unlink-shopify-product', unlinkShopifyProductHandler);
+
+/**
+ * Get Shopify products that can be linked to a model.
+ * Returns products that have a shopify_product_id (are pushed to Shopify).
+ */
+async function getLinkableShopifyProductsHandler(event, excludeModelId) {
+  try {
+    const products = db.prepare(`
+      SELECT
+        sp.id,
+        sp.title,
+        sp.shopify_product_id,
+        sp.folder_path,
+        sp.push_status,
+        (SELECT GROUP_CONCAT(sv.sku, ', ') FROM shopify_variants sv WHERE sv.product_id = sp.id) as skus
+      FROM shopify_products sp
+      WHERE sp.shopify_product_id IS NOT NULL
+        AND sp.shopify_product_id != ''
+      ORDER BY sp.title
+    `).all();
+
+    return products;
+  } catch (error) {
+    console.error('Error getting linkable Shopify products:', error);
+    throw error;
+  }
+}
+ipcMain.handle('get-linkable-shopify-products', getLinkableShopifyProductsHandler);
+ipcHandlerRegistry.set('get-linkable-shopify-products', getLinkableShopifyProductsHandler);
+
+/**
+ * Link a model to an existing Shopify product.
+ */
+async function linkModelToShopifyProductHandler(event, modelId, shopifyLocalProductId) {
+  try {
+    if (!modelId) throw new Error('modelId is required');
+    if (!shopifyLocalProductId) throw new Error('shopifyLocalProductId is required');
+
+    // Update the shopify_products record to link to this model
+    db.prepare('UPDATE shopify_products SET model_id = ? WHERE id = ?').run(modelId, shopifyLocalProductId);
+
+    console.log(`[Shopify] Linked model ${modelId} to local Shopify product ${shopifyLocalProductId}`);
+    return { success: true };
+  } catch (error) {
+    console.error('Error linking model to Shopify product:', error);
+    throw error;
+  }
+}
+ipcMain.handle('link-model-to-shopify-product', linkModelToShopifyProductHandler);
+ipcHandlerRegistry.set('link-model-to-shopify-product', linkModelToShopifyProductHandler);
+
+// ----------------------------------------------------------------------------
+// SKU Generation
+// ----------------------------------------------------------------------------
+
+/**
+ * Get the next series number for a collection+type combination.
+ */
+async function getNextSeriesNumberHandler(event, collectionCode, typeCode) {
+  try {
+    const row = db.prepare(`
+      SELECT last_series FROM shopify_series_counter
+      WHERE collection_code = ? AND type_code = ?
+    `).get(collectionCode, typeCode);
+
+    const nextSeries = (row?.last_series || 0) + 1;
+    return { nextSeries };
+  } catch (error) {
+    console.error('Error getting next series number:', error);
+    throw error;
+  }
+}
+ipcMain.handle('get-next-series-number', getNextSeriesNumberHandler);
+ipcHandlerRegistry.set('get-next-series-number', getNextSeriesNumberHandler);
+
+/**
+ * Allocate and reserve a series number.
+ */
+async function allocateSeriesNumberHandler(event, collectionCode, typeCode) {
+  try {
+    const row = db.prepare(`
+      SELECT last_series FROM shopify_series_counter
+      WHERE collection_code = ? AND type_code = ?
+    `).get(collectionCode, typeCode);
+
+    const nextSeries = (row?.last_series || 0) + 1;
+
+    db.prepare(`
+      INSERT INTO shopify_series_counter (collection_code, type_code, last_series)
+      VALUES (?, ?, ?)
+      ON CONFLICT(collection_code, type_code) DO UPDATE SET last_series = excluded.last_series
+    `).run(collectionCode, typeCode, nextSeries);
+
+    return { series: nextSeries };
+  } catch (error) {
+    console.error('Error allocating series number:', error);
+    throw error;
+  }
+}
+ipcMain.handle('allocate-series-number', allocateSeriesNumberHandler);
+ipcHandlerRegistry.set('allocate-series-number', allocateSeriesNumberHandler);
+
+/**
+ * Generate a product code from the product name.
+ */
+async function generateProductCodeHandler(event, productName) {
+  try {
+    // Extract alphanumeric characters and limit to 6 characters
+    const code = (productName || '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '')
+      .substring(0, 6);
+    return { code: code || 'PROD' };
+  } catch (error) {
+    console.error('Error generating product code:', error);
+    throw error;
+  }
+}
+ipcMain.handle('generate-product-code', generateProductCodeHandler);
+ipcHandlerRegistry.set('generate-product-code', generateProductCodeHandler);
+
+// ----------------------------------------------------------------------------
+// Photo Handling
+// ----------------------------------------------------------------------------
+
+/**
+ * Get images from a folder.
+ */
+async function getProductFolderImagesHandler(event, folderPath) {
+  try {
+    if (!folderPath || !fs.existsSync(folderPath)) {
+      return [];
+    }
+
+    const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+    const files = fs.readdirSync(folderPath);
+
+    const images = files
+      .filter(file => {
+        const ext = path.extname(file).toLowerCase();
+        return imageExtensions.includes(ext);
+      })
+      .map(file => {
+        const filePath = path.join(folderPath, file);
+        const stats = fs.statSync(filePath);
+        return {
+          filename: file,
+          path: filePath,
+          size: stats.size,
+          modifiedTime: stats.mtime.toISOString()
+        };
+      })
+      .sort((a, b) => a.filename.localeCompare(b.filename));
+
+    return images;
+  } catch (error) {
+    console.error('Error getting product folder images:', error);
+    throw error;
+  }
+}
+ipcMain.handle('get-product-folder-images', getProductFolderImagesHandler);
+ipcHandlerRegistry.set('get-product-folder-images', getProductFolderImagesHandler);
+
+/**
+ * Read an image as base64.
+ */
+async function readImageAsBase64Handler(event, imagePath) {
+  try {
+    if (!imagePath || !fs.existsSync(imagePath)) {
+      return null;
+    }
+
+    const data = fs.readFileSync(imagePath);
+    const ext = path.extname(imagePath).toLowerCase();
+    const mimeTypes = {
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.webp': 'image/webp',
+      '.gif': 'image/gif'
+    };
+    const mimeType = mimeTypes[ext] || 'image/jpeg';
+
+    return `data:${mimeType};base64,${data.toString('base64')}`;
+  } catch (error) {
+    console.error('Error reading image as base64:', error);
+    throw error;
+  }
+}
+ipcMain.handle('read-image-as-base64', readImageAsBase64Handler);
+ipcHandlerRegistry.set('read-image-as-base64', readImageAsBase64Handler);
+
+/**
+ * Show native context menu for photo in Shopify editor.
+ * Uses Electron's Menu API to avoid z-index/top-layer issues with <dialog>.
+ */
+async function showPhotoContextMenuHandler(event, payload) {
+  const { imagePath, modelPath, isShopifyImage } = payload;
+
+  // For Shopify images, just show a message - can't set as thumbnail
+  if (isShopifyImage) {
+    dialog.showMessageBox({
+      type: 'info',
+      title: 'Cannot Set Thumbnail',
+      message: 'Shopify images cannot be set as thumbnail. Add a local file first.'
+    });
+    return { action: 'none' };
+  }
+
+  return new Promise((resolve) => {
+    let clickStarted = false;
+
+    const menuItems = [
+      {
+        label: 'Set as Thumbnail',
+        click: async () => {
+          clickStarted = true;
+          try {
+            const base64 = await readImageAsBase64Handler(event, imagePath);
+            if (base64 && modelPath) {
+              await saveThumbnail(modelPath, base64);
+              // Notify renderer to refresh thumbnail display
+              const payload = { filePath: modelPath };
+              if (isServerMode && global.broadcastEvent) {
+                global.broadcastEvent('thumbnail-default-changed', payload);
+              } else if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('thumbnail-default-changed', payload);
+              }
+              resolve({ action: 'thumbnail-set', success: true });
+            } else {
+              resolve({ action: 'thumbnail-set', success: false, error: 'Could not read image' });
+            }
+          } catch (err) {
+            console.error('Error setting thumbnail:', err);
+            resolve({ action: 'thumbnail-set', success: false, error: err.message });
+          }
+        }
+      }
+    ];
+
+    const menu = Menu.buildFromTemplate(menuItems);
+    const win = getWindowFromEvent(event);
+
+    // Handle menu close without selection - only resolve if no click started
+    menu.once('menu-will-close', () => {
+      setTimeout(() => {
+        if (!clickStarted) {
+          resolve({ action: 'none' });
+        }
+      }, 50);
+    });
+
+    if (win) {
+      menu.popup({ window: win });
+    } else if (mainWindow && !mainWindow.isDestroyed()) {
+      menu.popup({ window: mainWindow });
+    } else {
+      menu.popup();
+    }
+  });
+}
+ipcMain.handle('show-photo-context-menu', showPhotoContextMenuHandler);
+ipcHandlerRegistry.set('show-photo-context-menu', showPhotoContextMenuHandler);
+
+/**
+ * Open file dialog to browse for images.
+ */
+async function browseForImagesHandler(event, defaultPath) {
+  try {
+    const dialogOptions = {
+      title: 'Select Product Images',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'] }
+      ]
+    };
+
+    // Open in the specified folder if provided
+    if (defaultPath && fs.existsSync(defaultPath)) {
+      dialogOptions.defaultPath = defaultPath;
+    }
+
+    const result = await dialog.showOpenDialog(mainWindow, dialogOptions);
+
+    if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+      return [];
+    }
+
+    // Return file info for each selected image
+    return result.filePaths.map(filePath => {
+      const stats = fs.statSync(filePath);
+      return {
+        filename: path.basename(filePath),
+        path: filePath,
+        size: stats.size,
+        modifiedTime: stats.mtime.toISOString()
+      };
+    });
+  } catch (error) {
+    console.error('Error browsing for images:', error);
+    throw error;
+  }
+}
+ipcMain.handle('browse-for-images', browseForImagesHandler);
+ipcHandlerRegistry.set('browse-for-images', browseForImagesHandler);
+
+// ----------------------------------------------------------------------------
+// Shopify API Push
+// ----------------------------------------------------------------------------
+
+const shopifyApi = require('./shopify');
+
+/**
+ * Push a product to Shopify as a Draft.
+ */
+async function pushToShopifyHandler(event, productId) {
+  try {
+    // Get product from database
+    const product = db.prepare(`
+      SELECT * FROM shopify_products WHERE id = ?
+    `).get(productId);
+
+    if (!product) {
+      throw new Error('Product not found');
+    }
+
+    // Get Shopify settings
+    const settings = readShopifySettings();
+    if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
+      throw new Error('Shopify credentials not configured. Please configure them in Tools → Shopify.');
+    }
+
+    // Get tags for the product (if linked to a model)
+    let tags = [];
+    if (product.model_id) {
+      const tagRows = db.prepare(`
+        SELECT t.name FROM tags t
+        JOIN model_tags mt ON t.id = mt.tag_id
+        WHERE mt.model_id = ?
+      `).all(product.model_id);
+      tags = tagRows.map(r => r.name);
+    }
+
+    // Get variants for this product
+    const variants = db.prepare(`
+      SELECT * FROM shopify_variants WHERE product_id = ? ORDER BY variant_number
+    `).all(productId);
+
+    const productData = {
+      title: product.title,
+      description: product.description,
+      licensor_collection: product.licensor_collection,
+      tags: tags
+    };
+
+    let shopifyProductId = product.shopify_product_id;
+    const isUpdate = !!shopifyProductId;
+
+    if (shopifyProductId) {
+      // Update existing product
+      console.log('[Shopify] Updating existing product:', shopifyProductId);
+      await shopifyApi.updateProduct(
+        settings.storeDomain,
+        settings.clientId,
+        settings.clientSecret,
+        shopifyProductId,
+        productData
+      );
+
+      // Update all variants that have a Shopify variant ID (using bulk update API)
+      const variantsToUpdate = variants
+        .filter(v => v.shopify_variant_id)
+        .map(v => ({
+          id: v.shopify_variant_id,
+          price: v.price,
+          sku: v.sku
+        }));
+
+      if (variantsToUpdate.length > 0) {
+        await shopifyApi.updateVariantsBulk(
+          settings.storeDomain,
+          settings.clientId,
+          settings.clientSecret,
+          shopifyProductId,
+          variantsToUpdate
+        );
+      }
+    } else {
+      // Create new product as draft
+      console.log('[Shopify] Creating new product as draft');
+      const result = await shopifyApi.createProductDraft(
+        settings.storeDomain,
+        settings.clientId,
+        settings.clientSecret,
+        productData
+      );
+
+      shopifyProductId = result.productId;
+
+      // If we have variants, update the default variant with first variant's data
+      if (result.variantId && variants.length > 0) {
+        const firstVariant = variants[0];
+        await shopifyApi.updateVariantsBulk(
+          settings.storeDomain,
+          settings.clientId,
+          settings.clientSecret,
+          shopifyProductId,
+          [{
+            id: result.variantId,
+            price: firstVariant.price,
+            sku: firstVariant.sku
+          }]
+        );
+
+        // Store the Shopify variant ID
+        db.prepare(`
+          UPDATE shopify_variants SET shopify_variant_id = ?, updated_at = datetime('now')
+          WHERE id = ?
+        `).run(result.variantId, firstVariant.id);
+      }
+
+      // TODO: For products with multiple variants, we'd need to create additional variants via API
+      // This is a more complex operation that would require additional Shopify mutations
+    }
+
+    // Update local database with Shopify product ID and status
+    db.prepare(`
+      UPDATE shopify_products SET
+        shopify_product_id = ?,
+        push_status = 'draft',
+        last_pushed_at = datetime('now'),
+        last_push_error = NULL,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `).run(shopifyProductId, productId);
+
+    return {
+      success: true,
+      shopifyProductId,
+      variantCount: variants.length,
+      message: isUpdate ? 'Product updated in Shopify' : 'Product created as Draft in Shopify'
+    };
+  } catch (error) {
+    console.error('Error pushing to Shopify:', error);
+
+    // Store the error in the database
+    db.prepare(`
+      UPDATE shopify_products SET
+        last_push_error = ?,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `).run(error.message || String(error), productId);
+
+    throw error;
+  }
+}
+ipcMain.handle('push-to-shopify', pushToShopifyHandler);
+ipcHandlerRegistry.set('push-to-shopify', pushToShopifyHandler);
+
+// ----------------------------------------------------------------------------
+// Shopify Reconciliation
+// ----------------------------------------------------------------------------
+
+/**
+ * Fetch all products from Shopify for reconciliation.
+ */
+async function fetchShopifyProductsHandler(event) {
+  try {
+    const settings = readShopifySettings();
+    if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
+      throw new Error('Shopify credentials not configured');
+    }
+
+    const products = await shopifyApi.fetchAllProducts(
+      settings.storeDomain,
+      settings.clientId,
+      settings.clientSecret,
+      500 // Fetch up to 500 products
+    );
+
+    return products;
+  } catch (error) {
+    console.error('Error fetching Shopify products:', error);
+    throw error;
+  }
+}
+ipcMain.handle('fetch-shopify-products', fetchShopifyProductsHandler);
+ipcHandlerRegistry.set('fetch-shopify-products', fetchShopifyProductsHandler);
+
+/**
+ * Get Shopify product IDs that are already linked to local products.
+ * Used to filter the reconciliation dropdown.
+ */
+async function getLinkedShopifyProductIdsHandler(event) {
+  try {
+    const rows = db.prepare(`
+      SELECT DISTINCT shopify_product_id FROM shopify_products
+      WHERE shopify_product_id IS NOT NULL AND shopify_product_id != ''
+    `).all();
+    return rows.map(r => r.shopify_product_id);
+  } catch (error) {
+    console.error('Error getting linked Shopify product IDs:', error);
+    return [];
+  }
+}
+ipcMain.handle('get-linked-shopify-product-ids', getLinkedShopifyProductIdsHandler);
+ipcHandlerRegistry.set('get-linked-shopify-product-ids', getLinkedShopifyProductIdsHandler);
+
+/**
+ * Helper: Normalize a file path to use forward slashes and extract folder path
+ */
+function normalizeFolderPath(filePath, fileName) {
+  const normalized = filePath.replace(/\\/g, '/');
+  // Remove the filename from the end to get folder path
+  const folderPath = normalized.substring(0, normalized.length - fileName.length - 1);
+  return folderPath;
+}
+
+/**
+ * Helper: Extract folder name (leaf) from full path
+ */
+function getFolderName(folderPath) {
+  const parts = folderPath.split('/').filter(p => p);
+  return parts[parts.length - 1] || folderPath;
+}
+
+/**
+ * Get folders (products) that need reconciliation.
+ * A folder is a "product" if it contains at least one 3MF file.
+ * STL files are excluded from being top-level candidates.
+ * Returns folder-level aggregations, not individual files.
+ *
+ * @param {boolean} includeSkipped - If true, include folders where all files are skipped
+ */
+async function getUnlinkedFoldersHandler(event, includeSkipped = false) {
+  try {
+    // First, get all 3MF files grouped by folder
+    // A folder needs reconciliation if:
+    // 1. It has at least one 3MF file
+    // 2. It doesn't have a linked shopify_products entry
+    // 3. Not all its 3MF files are marked as 'skipped' (unless includeSkipped)
+
+    const folders = db.prepare(`
+      WITH folder_files AS (
+        SELECT
+          REPLACE(
+            SUBSTR(REPLACE(filePath, '\\', '/'), 1,
+              LENGTH(REPLACE(filePath, '\\', '/')) - LENGTH(fileName) - 1),
+            '\\', '/'
+          ) as folder_path,
+          id as model_id,
+          fileName,
+          filePath,
+          designer,
+          parentModel
+        FROM models
+        WHERE LOWER(fileName) LIKE '%.3mf'
+      ),
+      folder_status AS (
+        SELECT
+          ff.folder_path,
+          COUNT(*) as file_count,
+          GROUP_CONCAT(ff.model_id || '::' || ff.fileName, '|') as files_info,
+          MAX(ff.designer) as designer,
+          MAX(ff.parentModel) as parentModel,
+          -- Check if folder is already linked to Shopify
+          sp.id as local_product_id,
+          sp.shopify_product_id,
+          sp.push_status,
+          sp.title as shopify_title,
+          -- Count skipped files in this folder
+          (SELECT COUNT(*) FROM shopify_product_files spf
+           WHERE spf.folder_path = ff.folder_path AND spf.link_status = 'skipped') as skipped_count
+        FROM folder_files ff
+        LEFT JOIN shopify_products sp ON sp.folder_path = ff.folder_path
+        GROUP BY ff.folder_path
+      )
+      SELECT
+        folder_path,
+        file_count,
+        files_info,
+        designer,
+        parentModel,
+        local_product_id,
+        shopify_product_id,
+        push_status,
+        shopify_title,
+        skipped_count
+      FROM folder_status
+      WHERE
+        -- Not yet linked to Shopify
+        (shopify_product_id IS NULL OR shopify_product_id = '')
+        AND (push_status IS NULL OR push_status NOT IN ('linked', 'draft', 'will_create_new'))
+        -- Not all files skipped (unless showing skipped)
+        AND (${includeSkipped ? '1=1' : 'skipped_count < file_count'})
+      ORDER BY folder_path
+    `).all();
+
+    // Parse the files_info into structured data and add folder_name
+    return folders.map(folder => {
+      const files = folder.files_info ? folder.files_info.split('|').map(f => {
+        const [modelId, fileName] = f.split('::');
+        // Check if this specific file is skipped
+        const fileStatus = db.prepare(
+          'SELECT link_status, is_primary FROM shopify_product_files WHERE folder_path = ? AND model_id = ?'
+        ).get(folder.folder_path, parseInt(modelId));
+
+        return {
+          model_id: parseInt(modelId),
+          fileName,
+          link_status: fileStatus?.link_status || 'pending',
+          is_primary: fileStatus?.is_primary || 0
+        };
+      }) : [];
+
+      return {
+        folder_path: folder.folder_path,
+        folder_name: getFolderName(folder.folder_path),
+        file_count: folder.file_count,
+        files,
+        designer: folder.designer,
+        parentModel: folder.parentModel,
+        local_product_id: folder.local_product_id,
+        shopify_product_id: folder.shopify_product_id,
+        push_status: folder.push_status,
+        shopify_title: folder.shopify_title,
+        skipped_count: folder.skipped_count
+      };
+    });
+  } catch (error) {
+    console.error('Error getting unlinked folders:', error);
+    throw error;
+  }
+}
+ipcMain.handle('get-unlinked-folders', getUnlinkedFoldersHandler);
+ipcHandlerRegistry.set('get-unlinked-folders', getUnlinkedFoldersHandler);
+
+// Keep old handler as alias for backwards compatibility
+async function getUnlinkedProductsHandler(event) {
+  return getUnlinkedFoldersHandler(event, false);
+}
+ipcMain.handle('get-unlinked-products', getUnlinkedProductsHandler);
+ipcHandlerRegistry.set('get-unlinked-products', getUnlinkedProductsHandler);
+
+/**
+ * Helper: Auto-populate parentModel for files in a folder if not already set.
+ * Uses the folder name as the parentModel value.
+ */
+function autoPopulateParentModel(folderPath) {
+  const folderName = getFolderName(folderPath);
+  // Only update files that don't have a parentModel set
+  const result = db.prepare(`
+    UPDATE models
+    SET parentModel = ?
+    WHERE parentModel IS NULL OR parentModel = ''
+    AND REPLACE(
+      SUBSTR(REPLACE(filePath, '\\', '/'), 1,
+        LENGTH(REPLACE(filePath, '\\', '/')) - LENGTH(fileName) - 1),
+      '\\', '/'
+    ) = ?
+  `).run(folderName, folderPath);
+  console.log(`[Shopify] Auto-populated parentModel for ${result.changes} files in ${folderPath}`);
+  return result.changes;
+}
+
+/**
+ * Link a folder (product) to an existing Shopify product.
+ * Creates shopify_products entry, fetches Shopify product details with variants.
+ * Marks the specified primary file and auto-populates parentModel.
+ *
+ * @param {string} folderPath - Full path to the product folder
+ * @param {number} primaryModelId - ID of the primary 3MF file for this product
+ * @param {string} shopifyProductGid - Shopify product GID to link to
+ */
+async function linkFolderToShopifyHandler(event, folderPath, primaryModelId, shopifyProductGid) {
+  try {
+    const settings = readShopifySettings();
+    if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
+      throw new Error('Shopify credentials not configured');
+    }
+
+    // Get the primary model info
+    const model = db.prepare('SELECT id, fileName, filePath, designer FROM models WHERE id = ?').get(primaryModelId);
+    if (!model) {
+      throw new Error('Primary model not found');
+    }
+
+    // Fetch full Shopify product details including variants
+    console.log('[Shopify] Fetching product details for:', shopifyProductGid);
+    const shopifyProduct = await shopifyApi.fetchProductWithVariants(
+      settings.storeDomain,
+      settings.clientId,
+      settings.clientSecret,
+      shopifyProductGid
+    );
+
+    // Check if we already have a shopify_products entry for this folder
+    let localProduct = db.prepare('SELECT id FROM shopify_products WHERE folder_path = ?').get(folderPath);
+
+    if (!localProduct) {
+      // Create new shopify_products entry
+      const result = db.prepare(`
+        INSERT INTO shopify_products (folder_path, model_id, title, description, source_folder, shopify_product_id, option_name, push_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'linked')
+      `).run(
+        folderPath,
+        primaryModelId,
+        shopifyProduct.title,
+        shopifyProduct.descriptionHtml || '',
+        model.filePath,
+        shopifyProductGid,
+        shopifyProduct.options?.[0]?.name || 'Finish'
+      );
+      localProduct = { id: result.lastInsertRowid };
+    } else {
+      // Update existing entry
+      db.prepare(`
+        UPDATE shopify_products SET
+          model_id = ?,
+          title = ?,
+          description = ?,
+          shopify_product_id = ?,
+          option_name = ?,
+          push_status = 'linked',
+          updated_at = datetime('now')
+        WHERE id = ?
+      `).run(
+        primaryModelId,
+        shopifyProduct.title,
+        shopifyProduct.descriptionHtml || '',
+        shopifyProductGid,
+        shopifyProduct.options?.[0]?.name || 'Finish',
+        localProduct.id
+      );
+    }
+
+    // Mark the primary file in shopify_product_files
+    db.prepare(`
+      INSERT INTO shopify_product_files (folder_path, model_id, is_primary, link_status)
+      VALUES (?, ?, 1, 'linked')
+      ON CONFLICT(folder_path, model_id) DO UPDATE SET is_primary = 1, link_status = 'linked', updated_at = datetime('now')
+    `).run(folderPath, primaryModelId);
+
+    // Clear existing variants and insert new ones from Shopify
+    db.prepare('DELETE FROM shopify_variants WHERE product_id = ?').run(localProduct.id);
+
+    const insertVariant = db.prepare(`
+      INSERT INTO shopify_variants (product_id, variant_number, option_value, sku, price, compare_at_price, inventory_quantity, shopify_variant_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    let variantNum = 1;
+    for (const variant of (shopifyProduct.variants || [])) {
+      insertVariant.run(
+        localProduct.id,
+        variantNum++,
+        variant.optionValue || variant.title || `Variant ${variantNum}`,
+        variant.sku || null,  // Preserve existing Shopify SKU
+        variant.price ? parseFloat(variant.price) : null,
+        variant.compareAtPrice ? parseFloat(variant.compareAtPrice) : null,
+        variant.inventoryQuantity ?? null,
+        variant.id
+      );
+    }
+
+    // Auto-populate parentModel for files in this folder (if not already set)
+    autoPopulateParentModel(folderPath);
+
+    console.log(`[Shopify] Linked folder ${folderPath} to Shopify product, imported ${variantNum - 1} variants`);
+    return { success: true, variantCount: variantNum - 1, title: shopifyProduct.title };
+  } catch (error) {
+    console.error('Error linking folder to Shopify product:', error);
+    throw error;
+  }
+}
+ipcMain.handle('link-folder-to-shopify', linkFolderToShopifyHandler);
+ipcHandlerRegistry.set('link-folder-to-shopify', linkFolderToShopifyHandler);
+
+/**
+ * Legacy handler: Link a single model to Shopify.
+ * Now delegates to folder-based linking using the model's folder.
+ */
+async function linkToShopifyProductHandler(event, modelId, shopifyProductGid) {
+  const model = db.prepare('SELECT id, fileName, filePath FROM models WHERE id = ?').get(modelId);
+  if (!model) {
+    throw new Error('Model not found');
+  }
+  const folderPath = normalizeFolderPath(model.filePath, model.fileName);
+  return linkFolderToShopifyHandler(event, folderPath, modelId, shopifyProductGid);
+}
+ipcMain.handle('link-to-shopify-product', linkToShopifyProductHandler);
+ipcHandlerRegistry.set('link-to-shopify-product', linkToShopifyProductHandler);
+
+/**
+ * Skip a file in reconciliation - it won't appear as needing action.
+ * Persisted so it doesn't reappear on re-runs.
+ */
+async function skipFolderFileHandler(event, folderPath, modelId) {
+  try {
+    db.prepare(`
+      INSERT INTO shopify_product_files (folder_path, model_id, is_primary, link_status)
+      VALUES (?, ?, 0, 'skipped')
+      ON CONFLICT(folder_path, model_id) DO UPDATE SET link_status = 'skipped', updated_at = datetime('now')
+    `).run(folderPath, modelId);
+    console.log(`[Shopify] Skipped file ${modelId} in folder ${folderPath}`);
+    return { success: true };
+  } catch (error) {
+    console.error('Error skipping file:', error);
+    throw error;
+  }
+}
+ipcMain.handle('skip-folder-file', skipFolderFileHandler);
+ipcHandlerRegistry.set('skip-folder-file', skipFolderFileHandler);
+
+/**
+ * Unskip a file - restore it to pending status for reconciliation.
+ */
+async function unskipFolderFileHandler(event, folderPath, modelId) {
+  try {
+    db.prepare(`
+      UPDATE shopify_product_files SET link_status = 'pending', updated_at = datetime('now')
+      WHERE folder_path = ? AND model_id = ?
+    `).run(folderPath, modelId);
+    console.log(`[Shopify] Unskipped file ${modelId} in folder ${folderPath}`);
+    return { success: true };
+  } catch (error) {
+    console.error('Error unskipping file:', error);
+    throw error;
+  }
+}
+ipcMain.handle('unskip-folder-file', unskipFolderFileHandler);
+ipcHandlerRegistry.set('unskip-folder-file', unskipFolderFileHandler);
+
+/**
+ * Get all skipped files for the "show skipped" view.
+ */
+async function getSkippedFilesHandler(event) {
+  try {
+    const skipped = db.prepare(`
+      SELECT spf.folder_path, spf.model_id, m.fileName, m.filePath
+      FROM shopify_product_files spf
+      JOIN models m ON m.id = spf.model_id
+      WHERE spf.link_status = 'skipped'
+      ORDER BY spf.folder_path, m.fileName
+    `).all();
+    return skipped;
+  } catch (error) {
+    console.error('Error getting skipped files:', error);
+    throw error;
+  }
+}
+ipcMain.handle('get-skipped-files', getSkippedFilesHandler);
+ipcHandlerRegistry.set('get-skipped-files', getSkippedFilesHandler);
+
+/**
+ * Mark a folder as "no match - will create new Shopify product".
+ * Creates a shopify_products entry if needed.
+ *
+ * @param {string} folderPath - Full path to the product folder
+ * @param {number} primaryModelId - ID of the primary 3MF file for this product
+ */
+async function markFolderAsNewHandler(event, folderPath, primaryModelId) {
+  try {
+    // Get the primary model info
+    const model = db.prepare('SELECT id, fileName, filePath FROM models WHERE id = ?').get(primaryModelId);
+    if (!model) {
+      throw new Error('Primary model not found');
+    }
+
+    const folderName = getFolderName(folderPath);
+
+    // Check if we already have a shopify_products entry for this folder
+    const existing = db.prepare('SELECT id FROM shopify_products WHERE folder_path = ?').get(folderPath);
+
+    if (existing) {
+      // Update existing entry
+      db.prepare(`
+        UPDATE shopify_products SET
+          model_id = ?,
+          shopify_product_id = NULL,
+          push_status = 'will_create_new',
+          updated_at = datetime('now')
+        WHERE id = ?
+      `).run(primaryModelId, existing.id);
+    } else {
+      // Create new entry - use folder name as title
+      db.prepare(`
+        INSERT INTO shopify_products (folder_path, model_id, title, source_folder, push_status)
+        VALUES (?, ?, ?, ?, 'will_create_new')
+      `).run(folderPath, primaryModelId, folderName, model.filePath);
+    }
+
+    // Mark the primary file in shopify_product_files
+    db.prepare(`
+      INSERT INTO shopify_product_files (folder_path, model_id, is_primary, link_status)
+      VALUES (?, ?, 1, 'will_create_new')
+      ON CONFLICT(folder_path, model_id) DO UPDATE SET is_primary = 1, link_status = 'will_create_new', updated_at = datetime('now')
+    `).run(folderPath, primaryModelId);
+
+    // Auto-populate parentModel for files in this folder (if not already set)
+    autoPopulateParentModel(folderPath);
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error marking folder as new product:', error);
+    throw error;
+  }
+}
+ipcMain.handle('mark-folder-as-new', markFolderAsNewHandler);
+ipcHandlerRegistry.set('mark-folder-as-new', markFolderAsNewHandler);
+
+/**
+ * Legacy handler: Mark a single model as "will create new".
+ * Now delegates to folder-based marking using the model's folder.
+ */
+async function markAsNewProductHandler(event, modelId) {
+  const model = db.prepare('SELECT id, fileName, filePath FROM models WHERE id = ?').get(modelId);
+  if (!model) {
+    throw new Error('Model not found');
+  }
+  const folderPath = normalizeFolderPath(model.filePath, model.fileName);
+  return markFolderAsNewHandler(event, folderPath, modelId);
+}
+ipcMain.handle('mark-as-new-product', markAsNewProductHandler);
+ipcHandlerRegistry.set('mark-as-new-product', markAsNewProductHandler);
+
+// ============================================================================
+// End Shopify Integration Handlers
+// ============================================================================
 
 // Add error handling to the getSetting handler
 async function getAdditionalFileTypesCatalogHandler() {
@@ -9523,6 +11564,115 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
       }
     }
   });
+
+  // Add "Set Thumbnail from Folder" options (single selection only)
+  if (filePaths.length === 1 && !isServerMode) {
+    const modelPath = filePaths[0];
+    const modelFolder = path.dirname(modelPath.includes('::') ? modelPath.split('::')[0] : modelPath);
+    const is3mf = modelPath.toLowerCase().endsWith('.3mf');
+
+    menuItems.push({
+      label: 'Set Thumbnail from Folder...',
+      click: async () => {
+        try {
+          const win = getWindowFromEvent(event);
+          const result = await dialog.showOpenDialog(win, {
+            title: 'Select Image for Thumbnail',
+            defaultPath: modelFolder,
+            properties: ['openFile'],
+            filters: [
+              { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }
+            ]
+          });
+
+          if (!result.canceled && result.filePaths && result.filePaths.length > 0) {
+            const imagePath = result.filePaths[0];
+            const base64 = await readImageAsBase64Handler(event, imagePath);
+            if (base64) {
+              await saveThumbnail(modelPath, base64);
+              // Notify renderer to refresh
+              const payload = { filePath: modelPath };
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('thumbnail-default-changed', payload);
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Error setting thumbnail from folder:', error);
+          const win = getWindowFromEvent(event);
+          if (win && !win.isDestroyed()) {
+            dialog.showMessageBox(win, {
+              type: 'error',
+              title: 'Error',
+              message: 'Could not set thumbnail',
+              detail: error.message
+            });
+          }
+        }
+      }
+    });
+  }
+
+  // Add Parent Model grouping options
+  menuItems.push({ type: 'separator' });
+
+  // Get current parentModel values for selected models to determine menu state
+  const selectedModels = filePaths.map(fp => db.prepare('SELECT id, parentModel FROM models WHERE filePath = ?').get(fp)).filter(Boolean);
+  const hasParentModel = selectedModels.some(m => m.parentModel && String(m.parentModel).trim() !== '');
+  const allSameParent = selectedModels.length > 0 &&
+    selectedModels.every(m => m.parentModel === selectedModels[0].parentModel);
+
+  menuItems.push({
+    label: 'Set Parent Model...',
+    click: async () => {
+      const win = getWindowFromEvent(event);
+      // Prompt for parent model name
+      if (win && !win.isDestroyed() && !isServerMode) {
+        // Use an input dialog - we'll broadcast to renderer for custom dialog
+        event.sender.send('show-parent-model-dialog', {
+          filePaths: filePaths,
+          currentValue: allSameParent && selectedModels[0]?.parentModel ? selectedModels[0].parentModel : ''
+        });
+      } else if (isServerMode && global.broadcastEvent) {
+        global.broadcastEvent('show-parent-model-dialog', {
+          filePaths: filePaths,
+          currentValue: allSameParent && selectedModels[0]?.parentModel ? selectedModels[0].parentModel : ''
+        });
+      }
+    }
+  });
+
+  if (hasParentModel) {
+    menuItems.push({
+      label: 'Clear Parent Model',
+      click: async () => {
+        try {
+          db.transaction(() => {
+            filePaths.forEach(fp => {
+              db.prepare('UPDATE models SET parentModel = NULL WHERE filePath = ?').run(fp);
+            });
+          })();
+          console.log(`[Parent Model] Cleared parentModel for ${filePaths.length} model(s)`);
+          if (isServerMode && global.broadcastEvent) {
+            global.broadcastEvent('refresh-grid');
+          } else {
+            event.sender.send('refresh-grid');
+          }
+        } catch (error) {
+          console.error('Error clearing parent model:', error);
+          const win = getWindowFromEvent(event);
+          if (win && !win.isDestroyed() && !isServerMode) {
+            dialog.showMessageBox(win, {
+              type: 'error',
+              title: 'Error',
+              message: 'Could not clear parent model',
+              detail: error.message
+            });
+          }
+        }
+      }
+    });
+  }
 
   // Add separator before file operations
   menuItems.push({ type: 'separator' });
@@ -12520,6 +14670,34 @@ ipcMain.on('start-print-roulette', (event) => {
   mainWindow.webContents.send('start-print-roulette');
 });
 
+// Handle filters pane state changes from renderer to update View menu checkbox
+ipcMain.on('filters-pane-state-changed', (event, isVisible) => {
+  const menu = Menu.getApplicationMenu();
+  if (menu) {
+    const viewMenu = menu.items.find(item => item.label === 'View');
+    if (viewMenu && viewMenu.submenu) {
+      const filtersPaneItem = viewMenu.submenu.items.find(item => item.id === 'filters-pane-toggle');
+      if (filtersPaneItem) {
+        filtersPaneItem.checked = isVisible;
+      }
+    }
+  }
+});
+
+// Handle sidebar state changes from renderer to update View menu checkbox
+ipcMain.on('sidebar-state-changed', (event, isVisible) => {
+  const menu = Menu.getApplicationMenu();
+  if (menu) {
+    const viewMenu = menu.items.find(item => item.label === 'View');
+    if (viewMenu && viewMenu.submenu) {
+      const sidebarItem = viewMenu.submenu.items.find(item => item.id === 'sidebar-toggle');
+      if (sidebarItem) {
+        sidebarItem.checked = isVisible;
+      }
+    }
+  }
+});
+
 // Add this new IPC handler at the end to open external URLs using the system's default browser
 ipcMain.handle('open-external', async (event, url) => {
   try {
@@ -14217,6 +16395,270 @@ function ensureFilamentsTablesExist() {
     return true;
   } catch (error) {
     console.error('Error ensuring filaments tables exist:', error);
+    return false;
+  }
+}
+
+/**
+ * Create Shopify integration tables for product listing management.
+ * Follows the same CREATE TABLE IF NOT EXISTS pattern as other ensure functions.
+ */
+function ensureShopifyTablesExist() {
+  try {
+    console.log('Ensuring Shopify tables exist...');
+
+    // Product types lookup (user-editable, e.g., FIG=Figure, ORN=Ornament)
+    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_product_types (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`).run();
+
+    // Collection codes (auto-tracked for uniqueness, e.g., DIS=Disney)
+    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_collection_codes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`).run();
+
+    // Main products table - links a folder (product) to Shopify
+    // folder_path is the authoritative identity (full path, normalized)
+    // model_id is the primary/representative file for this product
+    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        folder_path TEXT UNIQUE,
+        model_id INTEGER,
+        collection_code TEXT,
+        type_code TEXT,
+        product_code TEXT,
+        series_number INTEGER,
+        title TEXT NOT NULL,
+        description TEXT,
+        licensor_collection TEXT,
+        option_name TEXT DEFAULT 'Finish',
+        needs_measurement_review INTEGER DEFAULT 1,
+        needs_pricing_review INTEGER DEFAULT 1,
+        needs_final_photography INTEGER DEFAULT 1,
+        not_approved_for_publishing INTEGER DEFAULT 1,
+        photo_order TEXT,
+        source_folder TEXT,
+        shopify_product_id TEXT,
+        push_status TEXT DEFAULT 'not_pushed',
+        last_pushed_at DATETIME,
+        last_push_error TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(model_id) REFERENCES models(id) ON DELETE SET NULL
+    )`).run();
+
+    // Variants table - each product has 1+ variants with their own SKU/price
+    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_variants (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        variant_number INTEGER NOT NULL,
+        option_value TEXT NOT NULL,
+        sku TEXT,
+        price REAL,
+        compare_at_price REAL,
+        inventory_quantity INTEGER,
+        shopify_variant_id TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(product_id) REFERENCES shopify_products(id) ON DELETE CASCADE,
+        UNIQUE(product_id, variant_number)
+    )`).run();
+
+    // Product files table - tracks which files in a folder are primary/skipped/linked-separately
+    // This allows multi-3MF folders to be handled properly
+    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_product_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        folder_path TEXT NOT NULL,
+        model_id INTEGER NOT NULL,
+        is_primary INTEGER DEFAULT 0,
+        link_status TEXT DEFAULT 'pending',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(model_id) REFERENCES models(id) ON DELETE CASCADE,
+        UNIQUE(folder_path, model_id)
+    )`).run();
+
+    // Series counter (ensures unique series per collection+type combination)
+    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_series_counter (
+        collection_code TEXT NOT NULL,
+        type_code TEXT NOT NULL,
+        last_series INTEGER DEFAULT 0,
+        PRIMARY KEY(collection_code, type_code)
+    )`).run();
+
+    // Migration: Fix NOT NULL constraints on columns that should be nullable
+    // (collection_code, type_code, product_code, series_number are only needed for new products, not links)
+
+    // First, clean up any stale migration table from a failed previous run
+    const staleTables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='shopify_products_new'").all();
+    if (staleTables.length > 0) {
+      console.log('[Shopify] Cleaning up stale migration table shopify_products_new');
+      db.exec('DROP TABLE IF EXISTS shopify_products_new');
+    }
+
+    // Check current schema
+    const colInfo = db.prepare("PRAGMA table_info(shopify_products)").all();
+    const existingColNames = colInfo.map(c => c.name);
+    const notNullCols = colInfo.filter(c =>
+      ['collection_code', 'type_code', 'product_code', 'series_number'].includes(c.name) && c.notnull === 1
+    );
+
+    if (notNullCols.length > 0) {
+      console.log('[Shopify] Migrating: fixing NOT NULL constraints on:', notNullCols.map(c => c.name).join(', '));
+
+      // SQLite doesn't support ALTER COLUMN, so we need to recreate the table
+      // Build column list from existing columns to handle schema differences
+      const targetCols = [
+        'id', 'folder_path', 'model_id', 'collection_code', 'type_code', 'product_code',
+        'series_number', 'title', 'description', 'licensor_collection', 'option_name',
+        'needs_measurement_review', 'needs_pricing_review', 'needs_final_photography',
+        'not_approved_for_publishing', 'photo_order', 'source_folder', 'shopify_product_id',
+        'push_status', 'last_pushed_at', 'last_push_error', 'created_at', 'updated_at'
+      ];
+      const commonCols = targetCols.filter(c => existingColNames.includes(c));
+      const colList = commonCols.join(', ');
+
+      // Create new table with correct schema
+      db.exec(`
+        CREATE TABLE shopify_products_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          folder_path TEXT UNIQUE,
+          model_id INTEGER,
+          collection_code TEXT,
+          type_code TEXT,
+          product_code TEXT,
+          series_number INTEGER,
+          title TEXT NOT NULL,
+          description TEXT,
+          licensor_collection TEXT,
+          option_name TEXT DEFAULT 'Finish',
+          needs_measurement_review INTEGER DEFAULT 1,
+          needs_pricing_review INTEGER DEFAULT 1,
+          needs_final_photography INTEGER DEFAULT 1,
+          not_approved_for_publishing INTEGER DEFAULT 1,
+          photo_order TEXT,
+          source_folder TEXT,
+          shopify_product_id TEXT,
+          push_status TEXT DEFAULT 'not_pushed',
+          last_pushed_at DATETIME,
+          last_push_error TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(model_id) REFERENCES models(id) ON DELETE SET NULL
+        )
+      `);
+
+      // Copy existing data (only common columns)
+      db.prepare(`INSERT INTO shopify_products_new (${colList}) SELECT ${colList} FROM shopify_products`).run();
+
+      // Drop old table and rename new one
+      db.exec('DROP TABLE shopify_products');
+      db.exec('ALTER TABLE shopify_products_new RENAME TO shopify_products');
+
+      console.log('[Shopify] Migration complete - NOT NULL constraints removed');
+    }
+
+    // Migration: Add missing columns for existing installs
+    const productCols = db.prepare("PRAGMA table_info(shopify_products)").all();
+    const productColNames = productCols.map(c => c.name);
+    console.log('[Shopify] Current shopify_products columns:', productColNames.join(', '));
+
+    // Add model_id if missing (critical for reconciliation)
+    if (!productColNames.includes('model_id')) {
+      console.log('[Shopify] Migrating: adding model_id column...');
+      db.prepare('ALTER TABLE shopify_products ADD COLUMN model_id INTEGER').run();
+      console.log('[Shopify] Added model_id column');
+    }
+
+    // Add folder_path if missing (new folder-based reconciliation)
+    if (!productColNames.includes('folder_path')) {
+      console.log('[Shopify] Migrating: adding folder_path column...');
+      db.prepare('ALTER TABLE shopify_products ADD COLUMN folder_path TEXT').run();
+      console.log('[Shopify] Added folder_path column');
+      // Backfill folder_path from existing model_id entries
+      db.prepare(`
+        UPDATE shopify_products
+        SET folder_path = (
+          SELECT REPLACE(
+            SUBSTR(REPLACE(m.filePath, '\\', '/'), 1,
+              LENGTH(REPLACE(m.filePath, '\\', '/')) - LENGTH(m.fileName) - 1),
+            '\\', '/'
+          )
+          FROM models m WHERE m.id = shopify_products.model_id
+        )
+        WHERE model_id IS NOT NULL AND folder_path IS NULL
+      `).run();
+      console.log('[Shopify] Backfilled folder_path from existing entries');
+    }
+
+    // Add option_name if missing
+    if (!productColNames.includes('option_name')) {
+      console.log('[Shopify] Migrating: adding option_name column...');
+      db.prepare("ALTER TABLE shopify_products ADD COLUMN option_name TEXT DEFAULT 'Finish'").run();
+      console.log('[Shopify] Added option_name column');
+    }
+
+    // Verify critical columns exist after migration
+    const verifyColumns = db.prepare("PRAGMA table_info(shopify_products)").all();
+    const verifyColNames = verifyColumns.map(c => c.name);
+    if (!verifyColNames.includes('model_id')) {
+      console.error('[Shopify] CRITICAL: model_id column still missing after migration!');
+      throw new Error('Shopify migration failed: model_id column not added');
+    }
+    if (!verifyColNames.includes('folder_path')) {
+      console.error('[Shopify] CRITICAL: folder_path column still missing after migration!');
+      throw new Error('Shopify migration failed: folder_path column not added');
+    }
+
+    // Indexes for performance
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_products_model ON shopify_products(model_id)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_products_folder ON shopify_products(folder_path)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_products_shopify_id ON shopify_products(shopify_product_id)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_products_push_status ON shopify_products(push_status)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_variants_product ON shopify_variants(product_id)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_variants_sku ON shopify_variants(sku)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_variants_shopify_id ON shopify_variants(shopify_variant_id)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_product_types_code ON shopify_product_types(code)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_collection_codes_code ON shopify_collection_codes(code)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_product_files_folder ON shopify_product_files(folder_path)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_product_files_model ON shopify_product_files(model_id)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_product_files_status ON shopify_product_files(link_status)').run();
+
+    // Seed default product types if table is empty
+    const typeCount = db.prepare('SELECT COUNT(*) as count FROM shopify_product_types').get();
+    if (typeCount.count === 0) {
+      console.log('Seeding default product types...');
+      const defaultTypes = [
+        { code: 'FIG', name: 'Figure' },
+        { code: 'ORN', name: 'Ornament' },
+        { code: 'BOX', name: 'Box / Container' },
+        { code: 'ART', name: 'Articulated' },
+        { code: 'DEC', name: 'Decoration' },
+        { code: 'KEY', name: 'Keychain' },
+        { code: 'MAG', name: 'Magnet' },
+        { code: 'PLT', name: 'Planter' },
+        { code: 'SGN', name: 'Sign / Nameplate' },
+        { code: 'TOY', name: 'Toy / Fidget' },
+        { code: 'UTL', name: 'Utility / Functional' },
+        { code: 'OTH', name: 'Other' }
+      ];
+      const insertType = db.prepare('INSERT INTO shopify_product_types (code, name) VALUES (?, ?)');
+      for (const t of defaultTypes) {
+        insertType.run(t.code, t.name);
+      }
+      console.log(`Seeded ${defaultTypes.length} default product types`);
+    }
+
+    console.log('Shopify tables ensured');
+    return true;
+  } catch (error) {
+    console.error('Error ensuring Shopify tables exist:', error);
     return false;
   }
 }

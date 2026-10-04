@@ -1,8 +1,10 @@
 html {
   overflow-x: hidden;
-  --sidebar-width: 350px;
+  --sidebar-width: 320px;
   --folder-rail-width: 0px;
   --folder-tree-width: 280px;
+  --toolbar-height: 56px;
+  --filters-pane-width: 320px;
 }
 
 body {
@@ -98,16 +100,243 @@ select option:not(:checked):not([selected]):not(:hover) {
   padding: 20px;
 }
 
-.sidebar {
-  width: var(--sidebar-width, 350px);
-  height: 100vh;
-  box-sizing: border-box;
+/* ============================================
+   App Toolbar - Fixed top bar with search, filters, view controls
+   ============================================ */
+.app-toolbar {
   position: fixed;
   top: 0;
-  left: 0 !important;
-  margin-left: 0 !important;
-  transform: none !important;
-  background: rgba(30, 30, 46, 0.7);
+  left: 0;
+  right: 0;
+  height: var(--toolbar-height, 56px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  background: rgba(30, 30, 46, 0.95);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  z-index: 200;
+  box-sizing: border-box;
+}
+
+.toolbar-left,
+.toolbar-center,
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.toolbar-left {
+  flex: 0 0 auto;
+}
+
+.toolbar-center {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.toolbar-right {
+  flex: 0 0 auto;
+}
+
+/* Toolbar button base (Filters toggle, Folders toggle) */
+.toolbar-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.toolbar-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.toolbar-button.active,
+.filters-toggle-btn.active {
+  background: var(--primary-gradient, linear-gradient(135deg, #00d4ff 0%, #5b9fff 100%));
+  border-color: transparent;
+  color: #fff;
+}
+
+.filters-icon {
+  font-size: 14px;
+}
+
+/* Toolbar search */
+.toolbar-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 280px;
+  max-width: 280px;
+}
+
+.toolbar-search input {
+  width: 100%;
+  padding: 8px 70px 8px 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  transition: all 0.2s ease;
+}
+
+.toolbar-search input::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.toolbar-search input:focus {
+  outline: none;
+  border-color: var(--primary-accent, #00d4ff);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.1);
+}
+
+.toolbar-search .icon-button {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s ease;
+}
+
+.toolbar-search .icon-button:hover {
+  color: #fff;
+}
+
+.toolbar-search #toolbar-search-clear {
+  right: 32px;
+}
+
+.toolbar-search .icon-button.hidden {
+  display: none;
+}
+
+/* Toolbar quick filters */
+.toolbar-quick-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolbar-quick-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.toolbar-quick-filter:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.toolbar-quick-filter:has(input:checked) {
+  background: rgba(74, 158, 255, 0.2);
+  border-color: rgba(74, 158, 255, 0.4);
+  color: #fff;
+}
+
+.toolbar-quick-filter input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  min-height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Toolbar view buttons */
+.toolbar-view-buttons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar-view-buttons .view-button {
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
+.toolbar-view-buttons .preview-size-switcher {
+  margin-left: 4px;
+}
+
+/* Main content adjusts based on sidebar state */
+.main-content {
+  margin-top: var(--toolbar-height, 56px);
+  margin-left: 0;
+  transition: margin-left 0.25s ease;
+}
+
+/* Main content margin when sidebar is pinned */
+body.sidebar-pinned:not(.filters-pane-pinned) .main-content {
+  margin-left: var(--sidebar-width, 320px);
+}
+
+/* Main content margin when only filters is pinned */
+body.filters-pane-pinned:not(.sidebar-pinned) .main-content {
+  margin-left: var(--filters-pane-width, 320px);
+}
+
+/* Main content margin when both are pinned */
+body.sidebar-pinned.filters-pane-pinned .main-content {
+  margin-left: calc(var(--sidebar-width, 320px) + var(--filters-pane-width, 320px));
+}
+
+body.sidebar-pinned.folder-rail-open:not(.filters-pane-pinned) .main-content {
+  margin-left: calc(var(--sidebar-width, 320px) + var(--folder-rail-width, 0px));
+}
+
+/* ============================================
+   End App Toolbar
+   ============================================ */
+
+.sidebar {
+  width: var(--sidebar-width, 320px);
+  height: calc(100vh - var(--toolbar-height, 56px));
+  box-sizing: border-box;
+  position: fixed;
+  top: var(--toolbar-height, 56px);
+  left: 0;
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
+  background: rgba(30, 30, 46, 0.95);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   border-right: 1px solid rgba(255, 255, 255, 0.1);
@@ -123,6 +352,22 @@ select option:not(:checked):not([selected]):not(:hover) {
   scrollbar-gutter: stable;
   scroll-padding-bottom: 32px;
   z-index: 100;
+}
+
+/* Sidebar visible states - now using unified pane classes */
+.sidebar.pane-pinned {
+  transform: translateX(0);
+}
+
+/* Sidebar hover trigger zone - disabled since edge tabs handle hover */
+.sidebar-hover-trigger {
+  position: fixed;
+  left: 0;
+  top: var(--toolbar-height, 56px);
+  width: 12px;
+  height: calc(100vh - var(--toolbar-height, 56px));
+  z-index: 99;
+  pointer-events: none; /* Disabled - edge tabs handle hover */
 }
 
 .sidebar > * {
@@ -170,12 +415,19 @@ body.server-mode {
 html.server-mode {
   overflow-x: hidden;
 }
+body.server-mode .app-toolbar {
+  top: 30px;
+}
 body.server-mode .sidebar {
-  left: 0 !important;
-  top: 30px !important;
-  height: calc(100vh - 30px) !important;
-  transform: none !important;
-  margin-left: 0 !important;
+  top: calc(30px + var(--toolbar-height, 56px));
+  height: calc(100vh - 30px - var(--toolbar-height, 56px));
+}
+body.server-mode .sidebar-hover-trigger {
+  top: calc(30px + var(--toolbar-height, 56px));
+  height: calc(100vh - 30px - var(--toolbar-height, 56px));
+}
+body.server-mode .main-content {
+  margin-top: calc(30px + var(--toolbar-height, 56px));
 }
 /* A browser session cannot launch a local slicer, so hide that control. */
 body.server-mode #preview-send-to-slicer,
@@ -236,6 +488,42 @@ body.server-mode #preview-slicer-menu {
 }
 
 .form-group .search-notes-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  min-height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Grouping toggle in filter bar */
+.grouping-toggle-container {
+  margin-bottom: 8px !important;
+  padding: 0 20px !important;
+}
+
+.grouping-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.15s ease;
+}
+
+.grouping-toggle:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.grouping-toggle input[type="checkbox"] {
   width: 14px;
   height: 14px;
   min-width: 14px;
@@ -1092,38 +1380,9 @@ main {
   position: relative;
 }
 
-/* Grid view selector background - full width element */
-.grid-view-selector-background {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  width: 100%;
-  min-height: calc(15px + 40px + 15px); /* padding-top + button height + padding-bottom */
-  padding: 15px 0;
-  background: rgba(30, 30, 46, 0.6);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  z-index: 0;
-  pointer-events: none;
-  box-sizing: border-box;
-}
-
-/* Grid view selector */
-.grid-view-selector {
-  position: relative;
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 10px;
-  padding: 15px 20px;
-  margin-left: calc(var(--sidebar-width, 350px) + 20px + var(--folder-rail-width, 0px));
-  width: calc(100% - (var(--sidebar-width, 350px) + 40px + var(--folder-rail-width, 0px)));
-  background: transparent;
-  z-index: 1;
-  box-sizing: border-box;
-}
+/* Note: .grid-view-selector and .grid-view-selector-background have been replaced
+   by .app-toolbar which is now a fixed header. View buttons are in .toolbar-view-buttons.
+   These old styles are kept for reference but no longer apply. */
 
 .view-button {
   width: auto;
@@ -1165,18 +1424,22 @@ main {
   gap: 24px;
   row-gap: 32px;
   padding: 20px 24px;
-  margin-left: calc(var(--sidebar-width, 350px) + 20px + var(--folder-rail-width, 0px));
-  width: calc(100% - (var(--sidebar-width, 350px) + 40px + var(--folder-rail-width, 0px)));
-  max-width: calc(100vw - (var(--sidebar-width, 350px) + 40px + var(--folder-rail-width, 0px)));
+  /* Default: no sidebar pinned - full width with folder rail adjustment */
+  margin-left: calc(20px + var(--folder-rail-width, 0px));
+  width: calc(100% - (40px + var(--folder-rail-width, 0px)));
+  max-width: calc(100vw - (40px + var(--folder-rail-width, 0px)));
   box-sizing: border-box;
   overflow: visible;
   animation: fadeIn 0.5s ease-out;
+  transition: margin-left 0.25s ease, width 0.25s ease, max-width 0.25s ease;
   /* Subtle hexagon pattern background matching theme - default cyan */
   background-image: url("data:image/svg+xml,%3Csvg width='60' height='52' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M30 0l26 15v30l-26 15-26-15V15z' fill='none' stroke='rgba(0,212,255,0.04)' stroke-width='0.5'/%3E%3Cpath d='M0 26l30-15 30 15M0 26l30 15 30-15' fill='none' stroke='rgba(0,212,255,0.04)' stroke-width='0.5'/%3E%3C/svg%3E");
   background-size: 60px 52px;
   background-position: 0 0;
   position: relative;
 }
+
+/* File grid layout is now controlled by pane state rules in the dockable pane section */
 
 /* Theme-aware hexagon pattern */
 [data-theme="modern-purple"] .file-grid {
@@ -1290,6 +1553,17 @@ main {
   padding: 2px 6px;
   border-radius: 3px;
   font-size: 11px;
+  color: #fff;
+}
+
+.file-item-list .shopify-status {
+  position: static !important;
+  display: inline-block;
+  background: rgba(150, 191, 72, 0.85);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
   color: #fff;
 }
 
@@ -1478,7 +1752,8 @@ main {
   box-shadow: none;
   transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
-.grid-view-selector .list-view-columns-toolbar-btn:hover {
+.toolbar-view-buttons .list-view-columns-toolbar-btn:hover,
+.list-view-columns-toolbar-btn:hover {
   color: #fff;
   background: rgba(74, 158, 255, 0.18);
   border-color: rgba(74, 158, 255, 0.4);
@@ -1487,8 +1762,8 @@ main {
 }
 
 /* Preview tile size S/M/L — global `button` uses width:90% and pill styling; reset like .view-button.
-   Scoped under .grid-view-selector so cascade beats generic rules and layout stays one row on WebKit/macOS. */
-.grid-view-selector:not(.preview-view-active) .preview-size-switcher {
+   Scoped under .toolbar-view-buttons so cascade beats generic rules and layout stays one row on WebKit/macOS. */
+.toolbar-view-buttons:not(.preview-view-active) .preview-size-switcher {
   display: none !important;
   visibility: hidden !important;
   pointer-events: none !important;
@@ -1498,7 +1773,7 @@ main {
   display: none !important;
 }
 
-.grid-view-selector .preview-size-switcher {
+.toolbar-view-buttons .preview-size-switcher {
   display: flex !important;
   flex-direction: row !important;
   flex-wrap: nowrap !important;
@@ -1518,7 +1793,7 @@ main {
   border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
-.grid-view-selector .preview-size-switcher > button {
+.toolbar-view-buttons .preview-size-switcher > button {
   -webkit-appearance: none !important;
   appearance: none !important;
   display: inline-flex !important;
@@ -1548,19 +1823,19 @@ main {
   box-shadow: none !important;
 }
 
-.grid-view-selector .preview-size-switcher > button::before {
+.toolbar-view-buttons .preview-size-switcher > button::before {
   content: none !important;
   display: none !important;
 }
 
-.grid-view-selector .preview-size-switcher > button:hover {
+.toolbar-view-buttons .preview-size-switcher > button:hover {
   color: #fff !important;
   background: rgba(255, 255, 255, 0.08) !important;
   transform: none !important;
   box-shadow: none !important;
 }
 
-.grid-view-selector .preview-size-switcher > button.active {
+.toolbar-view-buttons .preview-size-switcher > button.active {
   color: #0a0a0a !important;
   background: var(--primary-accent, #00d4ff) !important;
 }
@@ -8141,6 +8416,26 @@ dialog:not([open]) {
   z-index: 2;
 }
 
+/* Shopify linked badge */
+.file-grid .shopify-status {
+  position: absolute;
+  top: 32px; /* Below archive badge if present, or higher if alone */
+  right: 8px;
+  background: rgba(150, 191, 72, 0.85); /* Shopify green */
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  z-index: 2;
+  cursor: default;
+}
+
+/* Position Shopify badge higher when no archive badge */
+.file-grid .file-item:not(:has(.archive-status)) .shopify-status {
+  top: 8px;
+}
+
 /* New badge inside .thumbnail-container: mid-right so it never sits under the card-level Printed pill (TL).
    Avoids Archive (card TR, one line), GROUPED (::after BL in detailed/preview; TR in list), 1/N badge (BR). */
 .file-grid .thumbnail-container > .new-status {
@@ -9456,10 +9751,10 @@ dialog:not([open]) {
 
 .folder-rail {
   position: fixed;
-  top: 0;
-  left: var(--sidebar-width, 350px);
+  top: var(--toolbar-height, 56px);
+  left: var(--sidebar-width, 320px);
   width: var(--folder-tree-width, 280px);
-  height: 100vh;
+  height: calc(100vh - var(--toolbar-height, 56px));
   z-index: 90;
   display: flex;
   flex-direction: column;
@@ -9470,14 +9765,19 @@ dialog:not([open]) {
   box-shadow: 4px 0 16px rgba(0, 0, 0, 0.25);
 }
 
+/* Folder rail position when sidebar is NOT pinned */
+body:not(.sidebar-pinned) .folder-rail {
+  left: 0;
+}
+
 .folder-rail.hidden,
 .folder-tree-popover.hidden {
   display: none;
 }
 
 body.server-mode .folder-rail {
-  top: 30px;
-  height: calc(100vh - 30px);
+  top: calc(30px + var(--toolbar-height, 56px));
+  height: calc(100vh - 30px - var(--toolbar-height, 56px));
 }
 
 .folder-rail-header {
@@ -9658,18 +9958,27 @@ body.server-mode .folder-rail {
 
 .sidebar-resize-handle {
   position: fixed;
-  top: 0;
-  left: calc(var(--sidebar-width, 350px) - 8px);
+  top: var(--toolbar-height, 56px);
+  left: calc(var(--sidebar-width, 320px) - 8px);
   right: auto;
   bottom: auto;
   width: 8px;
-  height: 100vh;
+  height: calc(100vh - var(--toolbar-height, 56px));
   z-index: 110;
+  /* Only show when sidebar is pinned */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+body.sidebar-pinned .sidebar-resize-handle {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 body.server-mode .sidebar-resize-handle {
-  top: 30px;
-  height: calc(100vh - 30px);
+  top: calc(30px + var(--toolbar-height, 56px));
+  height: calc(100vh - 30px - var(--toolbar-height, 56px));
 }
 
 .panel-resize-handle::after {
@@ -9695,3 +10004,2676 @@ body.is-panel-resizing * {
   cursor: col-resize !important;
   user-select: none !important;
 }
+
+/* ============================================================================
+   Shopify Integration Styles
+   ============================================================================ */
+
+/* Product Types Manager */
+.shopify-type-add-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  margin-bottom: 10px;
+}
+
+.shopify-type-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.shopify-type-field label {
+  font-size: 0.85em;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.shopify-type-field input {
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.2);
+  color: #fff;
+  font-size: 0.95em;
+}
+
+.shopify-type-field-wide {
+  flex: 1;
+}
+
+.shopify-type-add-row button {
+  padding: 8px 16px;
+  background: linear-gradient(135deg, #00d4ff 0%, #0066cc 100%);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  cursor: pointer;
+  font-weight: 500;
+  height: fit-content;
+}
+
+.shopify-type-add-row button:hover {
+  background: linear-gradient(135deg, #00e5ff 0%, #0077dd 100%);
+}
+
+.shopify-types-list {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.shopify-type-item {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  gap: 12px;
+}
+
+.shopify-type-item:last-child {
+  border-bottom: none;
+}
+
+.shopify-type-code {
+  font-family: 'Fira Code', 'SF Mono', monospace;
+  font-weight: 600;
+  color: #00d4ff;
+  min-width: 50px;
+}
+
+.shopify-type-name {
+  flex: 1;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.shopify-type-delete {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 1.2em;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.shopify-type-delete:hover {
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.1);
+}
+
+/* Success/warning text colors */
+.success-text {
+  color: #4ade80 !important;
+}
+
+.warning-text {
+  color: #fbbf24 !important;
+}
+
+/* Shopify Listing Button in Model Details */
+.shopify-listing-group {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.shopify-listing-group.shopify-listing-top {
+  margin-top: 0;
+  margin-bottom: 16px;
+  padding-top: 0;
+  padding-bottom: 16px;
+  border-top: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.shopify-listing-button {
+  width: 100%;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, #95bf47 0%, #5e8e3e 100%);
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.shopify-listing-button:hover {
+  background: linear-gradient(135deg, #a5cf57 0%, #6e9e4e 100%);
+  transform: translateY(-1px);
+}
+
+/* Shopify Integration Dialog - Simplified */
+.shopify-dialog {
+  max-width: 480px;
+}
+
+.shopify-status-banner {
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.shopify-status-banner.connected {
+  background: rgba(149, 191, 71, 0.15);
+  border: 1px solid rgba(149, 191, 71, 0.3);
+  color: #95bf47;
+}
+
+.shopify-status-banner.not-configured {
+  background: rgba(251, 191, 36, 0.15);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  color: #fbbf24;
+}
+
+.shopify-main-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.shopify-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+
+.shopify-action-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.shopify-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.shopify-action-btn .action-icon {
+  font-size: 20px;
+  width: 28px;
+  text-align: center;
+}
+
+.shopify-action-btn .action-label {
+  flex: 1;
+  font-weight: 500;
+}
+
+.shopify-action-btn .action-count {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.shopify-action-btn .action-count:empty {
+  display: none;
+}
+
+.shopify-action-btn .action-count.has-items {
+  background: rgba(0, 212, 255, 0.2);
+  color: #00d4ff;
+}
+
+.shopify-config-section {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.shopify-config-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  cursor: pointer;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  transition: all 0.2s ease;
+  list-style: none;
+}
+
+.shopify-config-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.shopify-config-toggle::before {
+  content: '▶';
+  font-size: 10px;
+  transition: transform 0.2s ease;
+}
+
+.shopify-config-section[open] .shopify-config-toggle::before {
+  transform: rotate(90deg);
+}
+
+.shopify-config-toggle:hover {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.shopify-config-content {
+  padding: 0 16px 16px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.shopify-config-content .form-group {
+  margin-bottom: 12px;
+}
+
+.shopify-config-content .form-group:last-child {
+  margin-bottom: 0;
+}
+
+.shopify-test-btn {
+  padding: 8px 16px;
+  background: linear-gradient(135deg, #00d4ff 0%, #0066cc 100%);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.shopify-test-btn:hover {
+  background: linear-gradient(135deg, #00e5ff 0%, #0077dd 100%);
+}
+
+/* Shopify Product Editor Dialog */
+.shopify-push-badge {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 0.85em;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.shopify-push-badge.shopify-push-draft {
+  background: rgba(149, 191, 71, 0.2);
+  color: #95bf47;
+}
+
+/* SKU Section */
+.shopify-sku-section {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.shopify-sku-section legend {
+  padding: 0 8px;
+  font-weight: 600;
+  color: #00d4ff;
+}
+
+.shopify-sku-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.shopify-sku-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 100px;
+}
+
+.shopify-sku-field-small {
+  flex: 0 0 70px;
+  min-width: 70px;
+}
+
+.shopify-sku-field label {
+  font-size: 0.8em;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.shopify-sku-field input,
+.shopify-sku-field select {
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.2);
+  color: #fff;
+  font-size: 0.9em;
+}
+
+.shopify-sku-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  background: rgba(0, 212, 255, 0.1);
+  border-radius: 6px;
+}
+
+.shopify-sku-preview label {
+  font-size: 0.85em;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.shopify-sku-preview code {
+  font-family: 'Fira Code', 'SF Mono', monospace;
+  font-size: 1.1em;
+  color: #00d4ff;
+  font-weight: 600;
+}
+
+/* Price Row */
+.shopify-price-row {
+  display: flex;
+  gap: 16px;
+}
+
+.shopify-price-row .form-group {
+  flex: 1;
+}
+
+/* Review Flags */
+.shopify-review-flags {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 16px 0;
+}
+
+.shopify-review-flags legend {
+  padding: 0 8px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.shopify-flags-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.shopify-flags-grid .checkbox-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9em;
+}
+
+/* Photos Section */
+.shopify-photos-section {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 16px 0;
+}
+
+.shopify-photos-section legend {
+  padding: 0 8px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.shopify-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.shopify-photo-item {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.3);
+  border: 2px solid transparent;
+  cursor: grab;
+  transition: border-color 0.2s ease;
+}
+
+.shopify-photo-item:hover {
+  border-color: #00d4ff;
+}
+
+.shopify-photo-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.shopify-photo-name {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 4px 6px;
+  background: rgba(0, 0, 0, 0.7);
+  font-size: 0.7em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shopify-photo-order {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 20px;
+  height: 20px;
+  background: #00d4ff;
+  color: #000;
+  border-radius: 50%;
+  font-size: 0.75em;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shopify-photo-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  background: rgba(255, 107, 107, 0.9);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  font-size: 0.9em;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.shopify-photo-item:hover .shopify-photo-remove {
+  opacity: 1;
+}
+
+/* Cloud indicator for existing Shopify images */
+.shopify-photo-cloud {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  font-size: 0.9em;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+/* Existing Shopify image styling */
+.shopify-photo-item.shopify-existing-image {
+  border-color: rgba(0, 200, 255, 0.3);
+}
+
+.shopify-photo-item.shopify-existing-image::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border: 2px solid rgba(0, 200, 255, 0.2);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+/* Featured image (first in list) */
+.shopify-photo-item.shopify-featured-image {
+  border-color: rgba(255, 200, 0, 0.5);
+  box-shadow: 0 0 8px rgba(255, 200, 0, 0.3);
+}
+
+.shopify-photo-item.shopify-featured-image .shopify-photo-order {
+  background: rgba(255, 200, 0, 0.9);
+  color: #000;
+  font-weight: bold;
+}
+
+/* Drag-and-drop styles */
+.shopify-photo-item[draggable="true"] {
+  cursor: grab;
+}
+
+.shopify-photo-item.dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+
+.shopify-photo-item.drag-over-left {
+  box-shadow: -3px 0 0 0 #4ade80, 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.shopify-photo-item.drag-over-right {
+  box-shadow: 3px 0 0 0 #4ade80, 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+/* Photo context menu styles */
+.photo-context-menu {
+  min-width: 180px;
+}
+
+.photo-context-item {
+  transition: background 0.1s ease;
+}
+
+.shopify-photo-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.shopify-photo-actions button {
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: all 0.2s ease;
+}
+
+.shopify-photo-actions button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #00d4ff;
+}
+
+/* Push Button */
+.shopify-push-btn {
+  background: linear-gradient(135deg, #95bf47 0%, #5e8e3e 100%) !important;
+}
+
+.shopify-push-btn:hover {
+  background: linear-gradient(135deg, #a5cf57 0%, #6e9e4e 100%) !important;
+}
+
+/* Shopify Editor - Large Layout */
+.shopify-product-editor {
+  max-width: 700px;
+  padding: 0;
+}
+
+.shopify-product-editor.shopify-editor-large {
+  max-width: 900px;
+  width: 90vw;
+}
+
+/* Make the form the scroll container so toolbar can be sticky */
+.shopify-product-editor #shopify-product-form {
+  max-height: 85vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.shopify-editor-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: rgba(30, 30, 35, 0.98);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  gap: 12px;
+  /* Sticky header - stays at top while content scrolls */
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  flex-shrink: 0;
+}
+
+.shopify-editor-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.shopify-model-path {
+  color: #fff;
+  font-weight: 500;
+  font-size: 0.95em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shopify-editor-badges {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.shopify-editor-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.shopify-action-btn {
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.85em;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.shopify-action-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #00d4ff;
+}
+
+.shopify-cancel-btn {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.shopify-cancel-btn:hover {
+  background: rgba(255, 100, 100, 0.2);
+  border-color: #ff6b6b;
+}
+
+.shopify-refresh-btn {
+  background: rgba(0, 212, 255, 0.1);
+  border-color: rgba(0, 212, 255, 0.3);
+}
+
+.shopify-refresh-btn:hover {
+  background: rgba(0, 212, 255, 0.2);
+  border-color: #00d4ff;
+}
+
+.shopify-status-hidden {
+  display: none !important;
+}
+
+.shopify-status-draft {
+  background: rgba(249, 199, 79, 0.2);
+  color: #f9c74f;
+}
+
+.shopify-status-active {
+  background: rgba(149, 191, 71, 0.2);
+  color: #95bf47;
+}
+
+/* Link Status Section */
+.shopify-link-section {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  background: rgba(25, 25, 30, 0.95);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 12px;
+}
+
+.shopify-link-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.shopify-link-label {
+  font-size: 0.85em;
+  color: rgba(255, 255, 255, 0.6);
+  white-space: nowrap;
+}
+
+.shopify-link-status-text {
+  font-size: 0.85em;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.shopify-link-status-text.linked {
+  color: #96bf48;
+}
+
+.shopify-link-status-text.not-linked {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.shopify-link-product-info {
+  font-size: 0.8em;
+  color: rgba(255, 255, 255, 0.5);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shopify-link-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.shopify-danger-btn {
+  background: rgba(231, 76, 60, 0.8) !important;
+}
+
+.shopify-danger-btn:hover {
+  background: rgba(231, 76, 60, 1) !important;
+}
+
+/* Editor Content Area */
+.shopify-editor-content {
+  padding: 16px;
+  /* Removed max-height and overflow - form is now the scroll container */
+  flex: 1;
+}
+
+.shopify-editor-large .shopify-editor-content {
+  /* Removed max-height - form handles scrolling */
+}
+
+/* Form Layout */
+.shopify-form-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.shopify-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.shopify-form-field label {
+  font-size: 0.8em;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 500;
+}
+
+.shopify-form-field input,
+.shopify-form-field textarea,
+.shopify-form-field select {
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.2);
+  color: #fff;
+  font-size: 0.9em;
+}
+
+.shopify-form-field input:focus,
+.shopify-form-field textarea:focus,
+.shopify-form-field select:focus {
+  outline: none;
+  border-color: #00d4ff;
+}
+
+.shopify-field-wide {
+  flex: 2;
+}
+
+.shopify-field-narrow {
+  flex: 0 0 80px;
+}
+
+/* Linked Product Section */
+.shopify-linked-section {
+  border: 1px solid rgba(149, 191, 71, 0.25);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(149, 191, 71, 0.03);
+}
+
+/* Field hints */
+.field-hint {
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 0.9em;
+}
+
+/* Description field with toggle */
+.shopify-description-field {
+  display: flex;
+  flex-direction: column;
+}
+
+.shopify-description-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.shopify-description-toggle {
+  display: flex;
+  gap: 2px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  padding: 2px;
+}
+
+.desc-toggle-btn {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.8em;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.desc-toggle-btn:hover {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.desc-toggle-btn.active {
+  background: rgba(0, 212, 255, 0.2);
+  color: #00d4ff;
+}
+
+.shopify-description-preview {
+  min-height: 120px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.2);
+  color: #fff;
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+
+.shopify-description-preview:empty::before {
+  content: 'No description';
+  color: rgba(255, 255, 255, 0.3);
+  font-style: italic;
+}
+
+.shopify-description-preview p {
+  margin: 0 0 0.8em 0;
+}
+
+.shopify-description-preview p:last-child {
+  margin-bottom: 0;
+}
+
+.shopify-description-preview ul,
+.shopify-description-preview ol {
+  margin: 0 0 0.8em 0;
+  padding-left: 1.5em;
+}
+
+.shopify-description-preview h1,
+.shopify-description-preview h2,
+.shopify-description-preview h3 {
+  margin: 0 0 0.5em 0;
+  font-size: 1.1em;
+}
+
+.shopify-description-code {
+  min-height: 120px;
+  font-family: 'Fira Code', 'SF Mono', 'Monaco', monospace;
+  font-size: 0.85em;
+  line-height: 1.4;
+}
+
+/* Rich Text Editor Toolbar */
+.shopify-desc-toolbar {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-bottom: none;
+  border-radius: 5px 5px 0 0;
+  flex-wrap: wrap;
+}
+
+.shopify-desc-toolbar button {
+  width: auto;           /* Override global button width: 90% */
+  margin-bottom: 0;      /* Override global button margin-bottom: 10px */
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.85em;
+  min-width: 30px;
+}
+
+.shopify-desc-toolbar button:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.shopify-desc-toolbar button:active,
+.shopify-desc-toolbar button.active {
+  background: rgba(0, 200, 255, 0.25);
+  border-color: rgba(0, 200, 255, 0.5);
+}
+
+.shopify-desc-toolbar .toolbar-separator {
+  width: 1px;
+  margin: 0 6px;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Contenteditable Editor */
+.shopify-description-editor {
+  min-height: 120px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 0 0 5px 5px;
+  background: rgba(0, 0, 0, 0.2);
+  color: #fff;
+  font-size: 0.9em;
+  line-height: 1.6;
+  outline: none;
+}
+
+.shopify-description-editor:focus {
+  border-color: rgba(0, 200, 255, 0.5);
+  box-shadow: 0 0 0 2px rgba(0, 200, 255, 0.1);
+}
+
+.shopify-description-editor:empty::before {
+  content: attr(data-placeholder);
+  color: rgba(255, 255, 255, 0.3);
+  font-style: italic;
+  pointer-events: none;
+}
+
+.shopify-description-editor p {
+  margin: 0 0 0.8em 0;
+}
+
+.shopify-description-editor p:last-child {
+  margin-bottom: 0;
+}
+
+.shopify-description-editor ul,
+.shopify-description-editor ol {
+  margin: 0 0 0.8em 0;
+  padding-left: 1.5em;
+}
+
+.shopify-description-editor h2 {
+  font-size: 1.3em;
+  margin: 0 0 0.5em 0;
+  font-weight: 600;
+}
+
+.shopify-description-editor h3 {
+  font-size: 1.1em;
+  margin: 0 0 0.5em 0;
+  font-weight: 600;
+}
+
+/* Hide toolbar when in HTML mode */
+.shopify-description-field.html-mode .shopify-desc-toolbar {
+  display: none;
+}
+
+.shopify-description-field.html-mode .shopify-description-editor {
+  display: none;
+}
+
+.shopify-description-field.html-mode .shopify-description-code {
+  display: block !important;
+  border-radius: 5px;
+}
+
+.field-hint.char-count {
+  float: right;
+}
+
+/* SEO Section */
+.shopify-seo-section {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+
+.shopify-seo-section summary {
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  list-style: none;
+}
+
+.shopify-seo-section summary::-webkit-details-marker {
+  display: none;
+}
+
+.shopify-seo-section summary::before {
+  content: '▶';
+  font-size: 10px;
+  margin-right: 8px;
+  display: inline-block;
+  transition: transform 0.2s ease;
+}
+
+.shopify-seo-section[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.shopify-seo-content {
+  padding: 0 12px 12px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Variants Table - Editable */
+.shopify-variants-table {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 250px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.shopify-variant-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.5fr) minmax(100px, 1fr) minmax(80px, 0.8fr) minmax(80px, 0.8fr);
+  gap: 10px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 5px;
+  align-items: center;
+  font-size: 0.9em;
+}
+
+.shopify-variant-row.header {
+  background: rgba(0, 0, 0, 0.3);
+  font-weight: 600;
+  font-size: 0.8em;
+  color: rgba(255, 255, 255, 0.5);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.shopify-variant-option {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shopify-variant-sku,
+.shopify-variant-price,
+.shopify-variant-inventory {
+  display: flex;
+  align-items: center;
+}
+
+.shopify-variant-price input,
+.shopify-variant-sku input,
+.shopify-variant-inventory input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #fff;
+  font-size: 0.9em;
+}
+
+.shopify-variant-price input:focus,
+.shopify-variant-sku input:focus,
+.shopify-variant-inventory input:focus {
+  outline: none;
+  border-color: #00d4ff;
+}
+
+.shopify-variant-price input {
+  text-align: right;
+}
+
+.shopify-variant-inventory input {
+  text-align: center;
+}
+
+/* Inventory field - highlight when changed */
+.shopify-variant-inventory input:not([data-original=""]):focus {
+  border-color: var(--accent-color, #4a9eff);
+}
+
+/* New Product Variants Section */
+.shopify-new-variants-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.shopify-add-variant-btn {
+  padding: 4px 12px;
+  border: 1px solid rgba(0, 200, 255, 0.4);
+  border-radius: 4px;
+  background: rgba(0, 200, 255, 0.15);
+  color: #00d4ff;
+  cursor: pointer;
+  font-size: 0.85em;
+}
+
+.shopify-add-variant-btn:hover {
+  background: rgba(0, 200, 255, 0.25);
+}
+
+.new-variant-row {
+  display: grid;
+  grid-template-columns: 1fr 80px 70px 150px 35px;
+  gap: 8px;
+  padding: 8px;
+  align-items: center;
+}
+
+.new-variant-row input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.2);
+  color: #fff;
+  font-size: 0.85em;
+}
+
+.new-variant-row input:focus {
+  border-color: rgba(0, 200, 255, 0.5);
+  outline: none;
+}
+
+.shopify-variant-sku-preview code {
+  font-size: 0.75em;
+  color: rgba(0, 212, 255, 0.8);
+  background: rgba(0, 0, 0, 0.2);
+  padding: 4px 8px;
+  border-radius: 3px;
+  display: block;
+  text-align: center;
+}
+
+.shopify-variant-actions {
+  text-align: center;
+}
+
+.shopify-remove-variant-btn {
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 100, 100, 0.3);
+  border-radius: 4px;
+  background: rgba(255, 100, 100, 0.1);
+  color: #ff6666;
+  cursor: pointer;
+  font-size: 1em;
+}
+
+.shopify-remove-variant-btn:hover:not(:disabled) {
+  background: rgba(255, 100, 100, 0.25);
+}
+
+.shopify-remove-variant-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* SKU Section - Compact */
+.shopify-sku-section-compact {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.shopify-sku-section-compact .shopify-sku-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.shopify-sku-section-compact .shopify-sku-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 70px;
+}
+
+.shopify-sku-section-compact .shopify-sku-field label {
+  font-size: 0.75em;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.shopify-sku-section-compact .shopify-sku-field-small {
+  flex: 0 0 50px;
+  min-width: 50px;
+}
+
+.shopify-sku-preview-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.shopify-sku-preview-inline label {
+  font-size: 0.75em;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.shopify-sku-preview-inline code {
+  padding: 6px 10px;
+  background: rgba(0, 212, 255, 0.1);
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  border-radius: 4px;
+  color: #00d4ff;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+/* Inline Add Form for Collection/Type */
+/* Add new Collection/Type - separate row below SKU row */
+.shopify-inline-add-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  align-items: center;
+  background: rgba(0, 200, 255, 0.08);
+  border: 1px solid rgba(0, 200, 255, 0.2);
+  border-radius: 6px;
+}
+
+.shopify-inline-add-row .add-row-label {
+  font-size: 0.8em;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
+}
+
+.shopify-inline-add-row input {
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #fff;
+  font-size: 0.85em;
+}
+
+.shopify-inline-add-row input:first-of-type {
+  width: 70px;
+}
+
+.shopify-inline-add-row input:nth-of-type(2) {
+  flex: 1;
+  min-width: 120px;
+}
+
+.shopify-inline-add-row button {
+  width: auto;
+  margin-bottom: 0;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.2);
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.shopify-inline-add-row button:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.shopify-inline-add-row button:first-of-type {
+  background: rgba(0, 200, 100, 0.3);
+  border-color: rgba(0, 200, 100, 0.5);
+}
+
+.shopify-inline-add-row button:first-of-type:hover {
+  background: rgba(0, 200, 100, 0.5);
+}
+
+/* "Add new" option styling in dropdowns */
+.shopify-sku-field select option[value="__add_new__"] {
+  color: #00d4ff;
+  font-style: italic;
+}
+
+/* New Product Fields - Compact */
+.shopify-new-fields-compact {
+  margin-bottom: 12px;
+}
+
+/* Review Flags - Inline */
+.shopify-flags-inline {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+  margin-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.shopify-flag {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8em;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+}
+
+.shopify-flag input {
+  margin: 0;
+}
+
+/* Photos Section - Compact */
+.shopify-photos-compact {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 12px;
+  margin-top: 12px;
+}
+
+.shopify-photos-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.shopify-photos-header label {
+  font-size: 0.85em;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 500;
+}
+
+.shopify-photo-btns {
+  display: flex;
+  gap: 6px;
+}
+
+.shopify-photo-btns button {
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  font-size: 0.8em;
+}
+
+.shopify-photo-btns button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: #00d4ff;
+}
+
+/* Photo size control */
+.shopify-photo-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.shopify-photo-size-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.shopify-photo-size-control .size-label {
+  font-size: 0.8em;
+  color: rgba(255, 255, 255, 0.6);
+  margin-right: 4px;
+}
+
+.photo-size-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.75em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.photo-size-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.photo-size-btn.active {
+  background: rgba(0, 200, 255, 0.2);
+  border-color: #00d4ff;
+  color: #00d4ff;
+}
+
+.shopify-photo-grid-compact {
+  display: grid;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+/* Small size - 60px tiles, max-height 100px */
+.shopify-photo-grid-compact[data-size="small"] {
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+  max-height: 100px;
+}
+
+.shopify-photo-grid-compact[data-size="small"] .shopify-photo-item {
+  height: 60px;
+}
+
+/* Medium size - 100px tiles, max-height 180px (default) */
+.shopify-photo-grid-compact[data-size="medium"],
+.shopify-photo-grid-compact:not([data-size]) {
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  max-height: 180px;
+}
+
+.shopify-photo-grid-compact[data-size="medium"] .shopify-photo-item,
+.shopify-photo-grid-compact:not([data-size]) .shopify-photo-item {
+  height: 100px;
+}
+
+/* Large size - 150px tiles, max-height 280px */
+.shopify-photo-grid-compact[data-size="large"] {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  max-height: 280px;
+}
+
+.shopify-photo-grid-compact[data-size="large"] .shopify-photo-item {
+  height: 150px;
+}
+
+/* Status Message */
+.shopify-status-msg {
+  margin: 8px 0 0;
+  padding: 0;
+  font-size: 0.85em;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* Shopify Reconciliation Dialog */
+.shopify-reconciliation {
+  max-width: 700px;
+}
+
+.reconciliation-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.reconciliation-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.reconciliation-filter-group label {
+  font-size: 0.85em;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
+}
+
+.reconciliation-filter-group select {
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: white;
+  font-size: 0.85em;
+  min-width: 120px;
+}
+
+.reconciliation-filter-group select:focus {
+  outline: none;
+  border-color: #00d4ff;
+}
+
+.reconciliation-status {
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.reconciliation-status .status-text {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.reconciliation-status.loading .status-text::before {
+  content: '';
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(0, 212, 255, 0.3);
+  border-top-color: #00d4ff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+.reconciliation-list {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.reconciliation-item {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reconciliation-item:last-child {
+  border-bottom: none;
+}
+
+.reconciliation-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.reconciliation-product-name {
+  font-weight: 500;
+  color: #fff;
+  flex: 1;
+}
+
+.reconciliation-product-folder {
+  font-size: 0.8em;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: 4px;
+}
+
+.reconciliation-status-badge {
+  font-size: 0.75em;
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.reconciliation-status-badge.linked {
+  background: rgba(149, 191, 71, 0.2);
+  color: #95bf47;
+}
+
+.reconciliation-status-badge.new {
+  background: rgba(0, 212, 255, 0.2);
+  color: #00d4ff;
+}
+
+.reconciliation-status-badge.unlinked {
+  background: rgba(255, 193, 7, 0.2);
+  color: #ffc107;
+}
+
+.reconciliation-match-section {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.reconciliation-match-section label {
+  font-size: 0.85em;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.reconciliation-match-select {
+  flex: 1;
+  min-width: 200px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.3);
+  color: #fff;
+  font-size: 0.9em;
+  cursor: pointer;
+  pointer-events: auto;
+  position: relative;
+  z-index: 10;
+}
+
+.reconciliation-match-select option {
+  background: #1a1a2e;
+}
+
+.reconciliation-suggested {
+  font-size: 0.75em;
+  padding: 2px 6px;
+  background: rgba(149, 191, 71, 0.3);
+  color: #b5df67;
+  border-radius: 3px;
+}
+
+.reconciliation-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.reconciliation-actions button {
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.85em;
+  transition: all 0.2s ease;
+}
+
+.reconciliation-actions button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.reconciliation-actions button.confirm-link {
+  background: rgba(149, 191, 71, 0.2);
+  border-color: rgba(149, 191, 71, 0.5);
+}
+
+.reconciliation-actions button.confirm-link:hover {
+  background: rgba(149, 191, 71, 0.3);
+}
+
+.reconciliation-actions button.mark-new {
+  background: rgba(0, 212, 255, 0.2);
+  border-color: rgba(0, 212, 255, 0.5);
+}
+
+.reconciliation-actions button.mark-new:hover {
+  background: rgba(0, 212, 255, 0.3);
+}
+
+.reconciliation-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.reconciliation-empty-icon {
+  font-size: 2em;
+  margin-bottom: 12px;
+}
+
+/* Folder-based reconciliation styles */
+.reconciliation-files-section {
+  margin: 10px 0;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+}
+
+.reconciliation-files-section label {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 8px;
+  display: block;
+}
+
+.reconciliation-files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.reconciliation-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.reconciliation-file.primary {
+  background: rgba(149, 191, 71, 0.15);
+  border: 1px solid rgba(149, 191, 71, 0.3);
+}
+
+.reconciliation-file label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  flex: 1;
+  margin: 0;
+}
+
+.reconciliation-file input[type="radio"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.reconciliation-file .primary-badge {
+  font-size: 10px;
+  background: rgba(149, 191, 71, 0.3);
+  color: #95bf47;
+  padding: 2px 6px;
+  border-radius: 3px;
+  margin-left: 8px;
+}
+
+.reconciliation-file .skip-file-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  background: rgba(255, 107, 107, 0.2);
+  color: #ff6b6b;
+  border: 1px solid rgba(255, 107, 107, 0.3);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.reconciliation-file .skip-file-btn:hover {
+  background: rgba(255, 107, 107, 0.3);
+}
+
+.reconciliation-skipped-files {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.reconciliation-skipped-files .skipped-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 8px;
+}
+
+.reconciliation-skipped-files .unskip-btn {
+  font-size: 10px;
+  padding: 1px 4px;
+  background: rgba(0, 212, 255, 0.2);
+  color: #00d4ff;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.reconciliation-skipped-files .unskip-btn:hover {
+  background: rgba(0, 212, 255, 0.3);
+}
+
+.reconciliation-actions button.skip-folder {
+  background: rgba(255, 107, 107, 0.15);
+  color: #ff6b6b;
+  border: 1px solid rgba(255, 107, 107, 0.3);
+}
+
+.reconciliation-actions button.skip-folder:hover {
+  background: rgba(255, 107, 107, 0.25);
+}
+
+.reconciliation-single-file {
+  margin: 8px 0;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* ============================================================================
+   Searchable Select Component
+   ============================================================================ */
+
+.searchable-select-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.searchable-select-wrapper .search-trigger {
+  width: 100%;
+  padding: 8px 32px 8px 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: white;
+  font-size: 0.9em;
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchable-select-wrapper .search-trigger:hover {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.searchable-select-wrapper .search-trigger:focus {
+  outline: none;
+  border-color: #00d4ff;
+}
+
+.searchable-select-wrapper .search-trigger::after {
+  content: '▼';
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.7em;
+  color: rgba(255, 255, 255, 0.5);
+  pointer-events: none;
+}
+
+.searchable-select-wrapper.open .search-trigger::after {
+  content: '▲';
+}
+
+.searchable-select-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: #2a2a2a;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  margin-top: 2px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  display: none;
+  max-height: 300px;
+  overflow: hidden;
+  flex-direction: column;
+}
+
+.searchable-select-wrapper.open .searchable-select-dropdown {
+  display: flex;
+}
+
+.searchable-select-dropdown .search-input-wrapper {
+  padding: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+.searchable-select-dropdown .search-input {
+  width: 100%;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: white;
+  font-size: 0.9em;
+}
+
+.searchable-select-dropdown .search-input:focus {
+  outline: none;
+  border-color: #00d4ff;
+}
+
+.searchable-select-dropdown .search-input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.searchable-select-options {
+  overflow-y: auto;
+  max-height: 240px;
+  flex: 1;
+}
+
+.searchable-select-option {
+  padding: 8px 12px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.9em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.searchable-select-option:last-child {
+  border-bottom: none;
+}
+
+.searchable-select-option:hover,
+.searchable-select-option.highlighted {
+  background: rgba(0, 212, 255, 0.15);
+}
+
+.searchable-select-option.selected {
+  background: rgba(0, 212, 255, 0.25);
+  color: #00d4ff;
+}
+
+.searchable-select-option.hidden {
+  display: none;
+}
+
+.searchable-select-option .option-subtitle {
+  display: block;
+  font-size: 0.8em;
+  color: rgba(255, 255, 255, 0.5);
+  margin-top: 2px;
+}
+
+.searchable-select-no-results {
+  padding: 12px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.85em;
+}
+
+/* Compact variant for inline use */
+.searchable-select-wrapper.compact .search-trigger {
+  padding: 6px 28px 6px 8px;
+  font-size: 0.85em;
+}
+
+.searchable-select-wrapper.compact .searchable-select-dropdown {
+  max-height: 250px;
+}
+
+.searchable-select-wrapper.compact .searchable-select-option {
+  padding: 6px 10px;
+  font-size: 0.85em;
+}
+
+/* Library Folders Dialog */
+.scan-buttons-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.scan-buttons-row #scan-directory-button {
+  flex: 1;
+}
+
+.scan-buttons-row .icon-button {
+  padding: 8px;
+  min-width: 36px;
+  font-size: 16px;
+}
+
+.library-folders-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.library-folder-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+}
+
+.library-folder-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.library-folder-path {
+  flex: 1;
+  font-family: monospace;
+  font-size: 12px;
+  color: #ccc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-folder-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.library-folder-controls label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #aaa;
+  cursor: pointer;
+}
+
+.library-folder-controls input[type="checkbox"] {
+  margin: 0;
+}
+
+.library-folder-remove {
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid rgba(255, 100, 100, 0.3);
+  border-radius: 4px;
+  color: #ff6b6b;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.library-folder-remove:hover {
+  background: rgba(255, 100, 100, 0.15);
+  border-color: rgba(255, 100, 100, 0.5);
+}
+
+.library-folders-empty {
+  text-align: center;
+  color: #888;
+  padding: 20px;
+  font-style: italic;
+}
+
+.library-folder-scan-info {
+  font-size: 11px;
+  color: #666;
+  margin-top: 4px;
+}
+
+/* Quick Filters */
+.quick-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 0;
+  margin-bottom: 8px;
+}
+
+.quick-filter-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #ccc;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.15s ease;
+}
+
+.quick-filter-checkbox:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.quick-filter-checkbox:has(input:checked) {
+  background: rgba(74, 158, 255, 0.2);
+  border-color: rgba(74, 158, 255, 0.4);
+  color: #fff;
+}
+
+.quick-filter-checkbox input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+/* ============================================
+   DOCKABLE PANES - Power BI Style
+   ============================================ */
+
+/* Edge Tabs Container - vertical stack on left edge */
+.edge-tabs-container {
+  position: fixed;
+  left: 0;
+  top: calc(var(--toolbar-height, 56px) + 20px);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 101;
+}
+
+/* Individual Edge Tab */
+.edge-tab {
+  width: 28px;
+  min-height: 70px;
+  background: rgba(30, 30, 46, 0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 4px;
+  cursor: pointer;
+  transition: transform 0.2s ease, background 0.15s ease;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.3);
+}
+
+.edge-tab:hover {
+  background: rgba(50, 50, 70, 0.95);
+  transform: translateX(2px);
+}
+
+.edge-tab.hidden {
+  display: none;
+}
+
+/* Ensure proper tab order and distinct styling */
+#sidebar-edge-tab {
+  order: 1;
+  border-left: 3px solid #4a9eff; /* Blue accent for Tools */
+}
+
+#filters-pane-edge-tab {
+  order: 2;
+  border-left: 3px solid #ff9f4a; /* Orange accent for Filters */
+}
+
+.edge-tab.active {
+  background: rgba(74, 158, 255, 0.2);
+  border-color: rgba(74, 158, 255, 0.4);
+}
+
+.edge-tab .edge-tab-icon {
+  font-size: 14px;
+}
+
+.edge-tab .edge-tab-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 10px;
+  font-weight: 500;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.edge-tab:hover .edge-tab-label,
+.edge-tab:hover .edge-tab-icon {
+  color: #fff;
+}
+
+.edge-tab.active .edge-tab-label,
+.edge-tab.active .edge-tab-icon {
+  color: #4a9eff;
+}
+
+/* Legacy class for backwards compatibility */
+.dockable-pane-edge-tab {
+  /* Now handled by .edge-tab */
+}
+
+/* Dockable Pane Base */
+.dockable-pane {
+  position: fixed;
+  left: 0;
+  top: var(--toolbar-height, 56px);
+  width: var(--filters-pane-width, 320px);
+  height: calc(100vh - var(--toolbar-height, 56px));
+  box-sizing: border-box;
+  background: rgba(30, 30, 46, 0.98);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 4px 0 20px rgba(0, 0, 0, 0.3), inset -1px 0 0 rgba(255, 255, 255, 0.05);
+  z-index: 100;
+  transform: translateX(-100%);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+
+/* Pane Header */
+.dockable-pane .pane-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.dockable-pane .pane-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.dockable-pane .pane-header-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.dockable-pane .pane-header-actions .icon-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #888;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.dockable-pane .pane-header-actions .icon-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.dockable-pane .pane-pin-btn.active {
+  color: #4a9eff;
+}
+
+.dockable-pane .pane-pin-btn.active:hover {
+  background: rgba(74, 158, 255, 0.15);
+}
+
+/* Toggle pin icons based on state - filters pane */
+.dockable-pane .pane-pin-btn .pin-icon-pinned {
+  display: none;
+}
+
+.dockable-pane .pane-pin-btn .pin-icon-unpinned {
+  font-size: 12px;
+}
+
+.dockable-pane .pane-pin-btn .pin-icon-pinned {
+  font-size: 12px;
+}
+
+.dockable-pane .pane-pin-btn.active .pin-icon-unpinned {
+  display: none;
+}
+
+.dockable-pane .pane-pin-btn.active .pin-icon-pinned {
+  display: inline;
+}
+
+.dockable-pane .pane-close-btn:hover {
+  background: rgba(255, 100, 100, 0.2);
+  color: #ff6b6b;
+}
+
+/* Pane Content */
+.dockable-pane .pane-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px;
+  scrollbar-gutter: stable;
+}
+
+/* Pane States */
+.dockable-pane.pane-closed {
+  transform: translateX(-100%);
+  pointer-events: none;
+}
+
+.dockable-pane.pane-pinned {
+  transform: translateX(0);
+}
+
+.dockable-pane.pane-autohide {
+  transform: translateX(-100%);
+  pointer-events: none; /* CRITICAL: Prevent mouse events when hidden */
+}
+
+.dockable-pane.pane-autohide.pane-revealed {
+  transform: translateX(0);
+  box-shadow: 8px 0 30px rgba(0, 0, 0, 0.5);
+  pointer-events: auto; /* Re-enable when revealed */
+}
+
+/* Body state classes for layout adjustments */
+/* .main-content handles pane offsets via margin-left */
+/* .file-grid only needs internal margins (20px) + folder-rail offset */
+/* DO NOT duplicate pane widths here - that causes double-offset */
+
+/* File grid layout - consistent across all pane states */
+/* The grid sits inside .main-content which already has the pane offset */
+.file-grid {
+  margin-left: calc(20px + var(--folder-rail-width, 0px)) !important;
+  width: calc(100% - (40px + var(--folder-rail-width, 0px))) !important;
+  max-width: calc(100% - (40px + var(--folder-rail-width, 0px))) !important;
+}
+
+/* Phase 2: Sidebar uses unified pane classes from PaneController */
+/* Sidebar (Tools) is always leftmost when visible */
+
+/* Sidebar closed state */
+.sidebar.pane-closed {
+  transform: translateX(-100%) !important;
+  pointer-events: none;
+}
+
+/* Sidebar auto-hide state (hidden by default) */
+.sidebar.pane-autohide {
+  transform: translateX(-100%) !important;
+  pointer-events: none;
+}
+
+/* Sidebar auto-hide when revealed */
+.sidebar.pane-autohide.pane-revealed {
+  pointer-events: auto;
+}
+
+/* Sidebar always at left:0 when pinned (it's the leftmost pane) */
+.sidebar.pane-pinned {
+  left: 0 !important;
+  transform: translateX(0) !important;
+}
+
+.sidebar.pane-autohide.pane-revealed {
+  left: 0 !important;
+  transform: translateX(0) !important;
+}
+
+/* Filters pane stacking - to the right of sidebar when sidebar is pinned */
+/* Default: Filters at left:0 when sidebar is NOT pinned */
+body:not(.sidebar-pinned) #filters-pane.pane-pinned {
+  left: 0 !important;
+}
+
+/* When sidebar IS pinned, filters PINNED stacks to its right */
+body.sidebar-pinned #filters-pane.pane-pinned {
+  left: var(--sidebar-width, 320px) !important;
+}
+
+/* Auto-hide revealed panes ALWAYS appear at left:0 (overlapping sidebar if needed) */
+/* This ensures the pane is adjacent to the edge tab for easy mouse access */
+#filters-pane.pane-autohide.pane-revealed {
+  left: 0 !important;
+  z-index: 102; /* Above sidebar (100) when revealed */
+}
+
+/* Sidebar header styles */
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.sidebar-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.sidebar-header-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.sidebar-pin-btn,
+.sidebar-close-btn {
+  background: transparent;
+  border: none;
+  color: #888;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.sidebar-pin-btn:hover,
+.sidebar-close-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.sidebar-pin-btn.active {
+  color: #4a9eff;
+}
+
+/* Toggle pin icons based on state */
+.sidebar-pin-btn .pin-icon-pinned {
+  display: none;
+}
+
+.sidebar-pin-btn.active .pin-icon-unpinned {
+  display: none;
+}
+
+.sidebar-pin-btn.active .pin-icon-pinned {
+  display: inline;
+}
+
+/* Panel Resize Handle */
+.dockable-pane .panel-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 102;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.dockable-pane .panel-resize-handle:hover,
+.dockable-pane .panel-resize-handle.is-active {
+  background: rgba(74, 158, 255, 0.4);
+}
+
+body.is-panel-resizing {
+  cursor: ew-resize !important;
+  user-select: none !important;
+}
+
+body.is-panel-resizing * {
+  cursor: ew-resize !important;
+}
+
+/* Server mode adjustments for dockable panes */
+body.server-mode .dockable-pane {
+  top: calc(30px + var(--toolbar-height, 56px));
+  height: calc(100vh - 30px - var(--toolbar-height, 56px));
+}
+
+body.server-mode .edge-tabs-container {
+  top: calc(30px + var(--toolbar-height, 56px) + 20px);
+}
+
+/* Filters Pane specific styles */
+#filters-pane .pane-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+#filters-pane .filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#filters-pane .filter-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+/* Search input in filters pane */
+#filters-pane .search-wrapper {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+#filters-pane .search-wrapper input {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  font-size: 13px;
+}
+
+#filters-pane .search-wrapper input:focus {
+  outline: none;
+  border-color: rgba(74, 158, 255, 0.5);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+#filters-pane .search-wrapper button {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+#filters-pane .search-wrapper button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Sort dropdown in filters pane */
+#filters-pane .sort-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#filters-pane .sort-wrapper select {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(30, 30, 46, 0.95);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#filters-pane .sort-wrapper select:focus {
+  outline: none;
+  border-color: rgba(74, 158, 255, 0.5);
+}
+
+/* Folder selector in filters pane */
+#filters-pane .folder-selector {
+  margin-top: 4px;
+}
+
+/* Collapsible sections in filters pane */
+#filters-pane .collapsible-section {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+#filters-pane .collapsible-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+#filters-pane .collapsible-section-header:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+#filters-pane .collapsible-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #ccc;
+}
+
+#filters-pane .collapsible-section-toggle {
+  font-size: 10px;
+  color: #888;
+  transition: transform 0.2s ease;
+}
+
+#filters-pane .collapsible-section.expanded .collapsible-section-toggle {
+  transform: rotate(180deg);
+}
+
+#filters-pane .collapsible-section-content {
+  padding: 12px;
+  display: none;
+}
+
+#filters-pane .collapsible-section.expanded .collapsible-section-content {
+  display: block;
+}
+
+/* ============================================
+   DETAILS PANE - Right-side dockable panel
+   ============================================ */
+
+/* Note: .file-grid layout is now handled by a single rule above.
+   .main-content handles pane offsets, .file-grid only has internal margins. */
+
+/* Note: Model/bundle/multi-edit details are displayed in the sidebar, not a separate pane */

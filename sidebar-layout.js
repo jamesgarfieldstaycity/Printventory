@@ -2,14 +2,19 @@
  * Sidebar layout: pin search / sort / folders; collapse the long filter stack
  * behind "More filters". Auto-collapse again when model details open.
  * Also owns drag-resize for the sidebar and Folders panels, persisting widths.
+ *
+ * Now delegates pin/visibility state to PaneController for unified pane management.
  */
 (function () {
+  'use strict';
+
+  const PANE_ID = 'sidebar';
   const DETAIL_IDS = ['model-details', 'bundle-details', 'multi-edit-panel'];
   const SIDEBAR_SETTING = 'sidebarWidth';
   const FOLDER_SETTING = 'folderTreeWidth';
   const SIDEBAR_MIN = 280;
   const SIDEBAR_MAX = 640;
-  const SIDEBAR_DEFAULT = 350;
+  const SIDEBAR_DEFAULT = 320;
   const FOLDER_MIN = 180;
   const FOLDER_MAX = 560;
   const FOLDER_DEFAULT = 280;
@@ -18,6 +23,35 @@
   let observer = null;
   let sidebarWidth = SIDEBAR_DEFAULT;
   let folderTreeWidth = FOLDER_DEFAULT;
+
+  // ============================================
+  // Register with PaneController
+  // ============================================
+
+  function registerPane() {
+    if (!window.PaneController) {
+      console.warn('[SidebarLayout] PaneController not loaded');
+      return;
+    }
+
+    window.PaneController.register(PANE_ID, {
+      element: '.sidebar',
+      edgeTab: '#sidebar-edge-tab',
+      settingPrefix: 'sidebar',
+      defaultState: window.PaneController.STATE_PINNED,
+      defaultWidth: SIDEBAR_DEFAULT,
+      minWidth: SIDEBAR_MIN,
+      maxWidth: SIDEBAR_MAX,
+      order: 1, // First in stack order (leftmost when pinned)
+      cssWidthVar: '--sidebar-width',
+      bodyClassPrefix: 'sidebar',
+      ipcChannel: 'sidebar-state-changed'
+    });
+  }
+
+  // ============================================
+  // DOM helpers
+  // ============================================
 
   function sidebar() {
     return document.querySelector('.sidebar');
@@ -31,6 +65,10 @@
     const n = parseInt(value, 10);
     return Number.isFinite(n) && n > 0 ? n : fallback;
   }
+
+  // ============================================
+  // Width management (sidebar-specific, separate from pane width)
+  // ============================================
 
   function applySidebarWidth(px) {
     sidebarWidth = clamp(Math.round(px), SIDEBAR_MIN, SIDEBAR_MAX);
@@ -48,6 +86,10 @@
       window.electron?.saveSetting?.(key, String(px));
     } catch (_) { /* ignore */ }
   }
+
+  // ============================================
+  // Resize handling
+  // ============================================
 
   function bindResize(handle, options) {
     if (!handle || handle.dataset.resizeBound) return;
@@ -114,6 +156,10 @@
     } catch (_) { /* ignore */ }
   }
 
+  // ============================================
+  // "More filters" expand/collapse
+  // ============================================
+
   function detailsAreOpen() {
     const multi = document.getElementById('multi-edit-panel');
     if (multi && !multi.classList.contains('hidden')) return true;
@@ -171,7 +217,43 @@
     sync();
   }
 
+  // ============================================
+  // Legacy API compatibility
+  // ============================================
+
+  function isPinned() {
+    return window.PaneController?.isPinned(PANE_ID) || false;
+  }
+
+  function setPinned(pinned) {
+    if (pinned) {
+      window.PaneController?.setState(PANE_ID, window.PaneController.STATE_PINNED);
+    } else {
+      window.PaneController?.setState(PANE_ID, window.PaneController.STATE_AUTOHIDE);
+    }
+  }
+
+  function togglePinned() {
+    window.PaneController?.togglePinned(PANE_ID);
+  }
+
+  function showSidebar() {
+    window.PaneController?.reveal(PANE_ID);
+  }
+
+  function hideSidebar() {
+    window.PaneController?.unreveal(PANE_ID);
+  }
+
+  // ============================================
+  // Initialization
+  // ============================================
+
   async function init() {
+    // Register with unified controller
+    registerPane();
+
+    // "More filters" toggle (existing functionality)
     const toggle = document.getElementById('filter-stack-toggle');
     if (toggle && !toggle.dataset.sidebarLayoutBound) {
       toggle.dataset.sidebarLayoutBound = '1';
@@ -183,6 +265,10 @@
     await loadSavedWidths();
   }
 
+  // ============================================
+  // Public API
+  // ============================================
+
   window.SidebarLayout = {
     init,
     sync,
@@ -193,7 +279,13 @@
     },
     getFolderTreeWidth() {
       return folderTreeWidth;
-    }
+    },
+    // Pane state API (delegates to PaneController)
+    isPinned,
+    setPinned,
+    togglePinned,
+    showSidebar,
+    hideSidebar
   };
 
   if (document.readyState === 'loading') {

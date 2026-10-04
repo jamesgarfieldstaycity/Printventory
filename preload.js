@@ -66,8 +66,14 @@ contextBridge.exposeInMainWorld('electron', {
   reportServerThumbnailError: (errorInfo) => ipcRenderer.invoke('report-server-thumbnail-error', errorInfo || {}),
   getServerThumbnailJobStatus: () => ipcRenderer.invoke('get-server-thumbnail-job-status'),
   loadDirectory: () => ipcRenderer.invoke('load-directory'),
-  openFileDialog: () => ipcRenderer.invoke('open-file-dialog'),
+  openFileDialog: (defaultPath) => ipcRenderer.invoke('open-file-dialog', defaultPath),
   saveDirectory: (directoryPath) => ipcRenderer.invoke('save-directory', directoryPath),
+  // Library folders management
+  getLibraryFolders: () => ipcRenderer.invoke('get-library-folders'),
+  addLibraryFolder: (path) => ipcRenderer.invoke('add-library-folder', path),
+  updateLibraryFolder: (data) => ipcRenderer.invoke('update-library-folder', data),
+  removeLibraryFolder: (id) => ipcRenderer.invoke('remove-library-folder', id),
+  updateLibraryFolderScanTime: (id) => ipcRenderer.invoke('update-library-folder-scan-time', id),
   scanDirectory: (directoryPath, options) => ipcRenderer.invoke('scan-directory', directoryPath, options || {}),
   getModel: (filePath) => ipcRenderer.invoke('get-model', filePath),
   getModelsFiltered: (filters) => ipcRenderer.invoke('get-models-filtered', filters),
@@ -80,6 +86,7 @@ contextBridge.exposeInMainWorld('electron', {
   setThumbnailGenerationActive: (active) => ipcRenderer.invoke('set-thumbnail-generation-active', !!active),
   getDesigners: () => ipcRenderer.invoke('get-designers'),
   getLicenses: () => ipcRenderer.invoke('get-licenses'),
+  setParentModelBatch: (filePaths, parentModel) => ipcRenderer.invoke('set-parent-model-batch', filePaths, parentModel),
   getModelsByDesigner: (designer) => ipcRenderer.invoke('get-models-by-designer', designer),
   showItemInFolder: (filePath) => ipcRenderer.invoke('show-item-in-folder', filePath),
   openPath: (path) => ipcRenderer.invoke('open-path', path),
@@ -120,6 +127,66 @@ contextBridge.exposeInMainWorld('electron', {
   testSpoolmanConnection: (url, token) => ipcRenderer.invoke('test-spoolman-connection', url, token),
   syncSpoolmanFilaments: (url, token) => ipcRenderer.invoke('sync-spoolman-filaments', url, token),
   onOpenFilamentManager: (callback) => ipcRenderer.on('open-filament-manager', callback),
+  // Shopify integration
+  getShopifySettings: () => ipcRenderer.invoke('get-shopify-settings'),
+  saveShopifySettings: (settings) => ipcRenderer.invoke('save-shopify-settings', settings),
+  testShopifyConnection: (storeDomain, clientId, clientSecret) => ipcRenderer.invoke('test-shopify-connection', storeDomain, clientId, clientSecret),
+  // Shopify product types
+  getShopifyProductTypes: () => ipcRenderer.invoke('get-shopify-product-types'),
+  saveShopifyProductType: (productType) => ipcRenderer.invoke('save-shopify-product-type', productType),
+  deleteShopifyProductType: (typeId) => ipcRenderer.invoke('delete-shopify-product-type', typeId),
+  // Shopify collection codes
+  getShopifyCollectionCodes: () => ipcRenderer.invoke('get-shopify-collection-codes'),
+  suggestShopifyCollectionCode: (folderName) => ipcRenderer.invoke('suggest-shopify-collection-code', folderName),
+  saveShopifyCollectionCode: (collectionCode) => ipcRenderer.invoke('save-shopify-collection-code', collectionCode),
+  deleteShopifyCollectionCode: (codeId) => ipcRenderer.invoke('delete-shopify-collection-code', codeId),
+  // Shopify products
+  getShopifyProducts: (filters) => ipcRenderer.invoke('get-shopify-products', filters),
+  getShopifyProduct: (productId) => ipcRenderer.invoke('get-shopify-product', productId),
+  getShopifyProductByModel: (modelId) => ipcRenderer.invoke('get-shopify-product-by-model', modelId),
+  saveShopifyProduct: (productData) => ipcRenderer.invoke('save-shopify-product', productData),
+  deleteShopifyProduct: (productId) => ipcRenderer.invoke('delete-shopify-product', productId),
+  // SKU generation
+  getNextSeriesNumber: (collectionCode, typeCode) => ipcRenderer.invoke('get-next-series-number', collectionCode, typeCode),
+  allocateSeriesNumber: (collectionCode, typeCode) => ipcRenderer.invoke('allocate-series-number', collectionCode, typeCode),
+  generateProductCode: (productName) => ipcRenderer.invoke('generate-product-code', productName),
+  // Photo handling
+  getProductFolderImages: (folderPath) => ipcRenderer.invoke('get-product-folder-images', folderPath),
+  readImageAsBase64: (imagePath) => ipcRenderer.invoke('read-image-as-base64', imagePath),
+  browseForImages: (defaultPath) => ipcRenderer.invoke('browse-for-images', defaultPath),
+  showPhotoContextMenu: (payload) => ipcRenderer.invoke('show-photo-context-menu', payload),
+  // Shopify push
+  pushToShopify: (productId) => ipcRenderer.invoke('push-to-shopify', productId),
+  // Shopify live data (for linked products)
+  fetchLiveShopifyData: (localProductId) => ipcRenderer.invoke('fetch-live-shopify-data', localProductId),
+  updateLinkedShopifyProduct: (localProductId, updates) => ipcRenderer.invoke('update-linked-shopify-product', localProductId, updates),
+  // Shopify media operations
+  deleteShopifyProductMedia: (shopifyProductId, mediaIds) => ipcRenderer.invoke('delete-shopify-product-media', shopifyProductId, mediaIds),
+  uploadShopifyProductImages: (shopifyProductId, images) => ipcRenderer.invoke('upload-shopify-product-images', shopifyProductId, images),
+  reorderShopifyProductMedia: (shopifyProductId, moves) => ipcRenderer.invoke('reorder-shopify-product-media', shopifyProductId, moves),
+  setShopifyInventory: (updates) => ipcRenderer.invoke('set-shopify-inventory', updates),
+  // Shopify reconciliation (folder-based)
+  fetchShopifyProducts: () => ipcRenderer.invoke('fetch-shopify-products'),
+  getLinkedShopifyProductIds: () => ipcRenderer.invoke('get-linked-shopify-product-ids'),
+  getUnlinkedFolders: (includeSkipped) => ipcRenderer.invoke('get-unlinked-folders', includeSkipped),
+  getUnlinkedProducts: () => ipcRenderer.invoke('get-unlinked-products'), // Legacy alias
+  linkFolderToShopify: (folderPath, primaryModelId, shopifyProductGid) =>
+    ipcRenderer.invoke('link-folder-to-shopify', folderPath, primaryModelId, shopifyProductGid),
+  linkToShopifyProduct: (modelId, shopifyProductGid) =>
+    ipcRenderer.invoke('link-to-shopify-product', modelId, shopifyProductGid), // Legacy
+  // Model-level Shopify linking
+  unlinkShopifyProduct: (modelId) => ipcRenderer.invoke('unlink-shopify-product', modelId),
+  getLinkableShopifyProducts: () => ipcRenderer.invoke('get-linkable-shopify-products'),
+  linkModelToShopifyProduct: (modelId, shopifyLocalProductId) =>
+    ipcRenderer.invoke('link-model-to-shopify-product', modelId, shopifyLocalProductId),
+  markFolderAsNew: (folderPath, primaryModelId) =>
+    ipcRenderer.invoke('mark-folder-as-new', folderPath, primaryModelId),
+  markAsNewProduct: (modelId) => ipcRenderer.invoke('mark-as-new-product', modelId), // Legacy
+  skipFolderFile: (folderPath, modelId) =>
+    ipcRenderer.invoke('skip-folder-file', folderPath, modelId),
+  unskipFolderFile: (folderPath, modelId) =>
+    ipcRenderer.invoke('unskip-folder-file', folderPath, modelId),
+  getSkippedFiles: () => ipcRenderer.invoke('get-skipped-files'),
   getAllMetadata: () => ipcRenderer.invoke('get-all-metadata'),
   getStats: () => ipcRenderer.invoke('get-stats'),
   renameMetadata: (type, oldName, newName) => ipcRenderer.invoke('rename-metadata', type, oldName, newName),
@@ -190,6 +257,7 @@ contextBridge.exposeInMainWorld('electron', {
   showContextMenu: (filePath) => ipcRenderer.invoke('show-context-menu', filePath),
   executeContextMenuAction: (requestId, itemIndex, subIndex) => ipcRenderer.invoke('execute-context-menu-action', requestId, itemIndex, subIndex),
   onRefreshGrid: (callback) => ipcRenderer.on('refresh-grid', callback),
+  onShowParentModelDialog: (callback) => ipcRenderer.on('show-parent-model-dialog', (event, data) => callback(data)),
   onThumbnailAdded: (callback) => ipcRenderer.on('thumbnail-added', (event, data) => callback(data)),
   onOpenThemeSettings: (callback) => ipcRenderer.on('open-theme-settings', callback),
   quitApp: () => ipcRenderer.invoke('quitApp'),
@@ -300,6 +368,7 @@ contextBridge.exposeInMainWorld('electron', {
       'open-printer-management',
       'open-parts-stock',
       'open-purge-models',
+      'open-shopify-settings',
       'open-metadata-editor',
       'open-theme-settings',
       'open-performance-settings',
@@ -330,6 +399,8 @@ contextBridge.exposeInMainWorld('electron', {
       'execute-client-command',
       'download-model',
       'start-print-roulette',
+      'toggle-filters-pane',
+      'toggle-sidebar',
     ];
     if (validChannels.includes(channel)) {
       ipcRenderer.on(channel, (event, ...args) => callback(...args));
