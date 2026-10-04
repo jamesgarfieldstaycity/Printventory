@@ -275,12 +275,9 @@ async function performCombinedSearch(options) {
 
     console.log("Performing combined search...", window.dateAddedFilter ? `dateAddedFilter: ${window.dateAddedFilter}` : "no dateAddedFilter");
 
-    // CRITICAL: If dateAddedFilter was set but is now null, restore it
-    // This prevents it from being cleared by other code
-    if (!window.dateAddedFilter && window._lastDateAddedFilter) {
-      console.warn("dateAddedFilter was cleared! Restoring from _lastDateAddedFilter:", window._lastDateAddedFilter);
-      window.dateAddedFilter = window._lastDateAddedFilter;
-    }
+    // Note: Previously there was aggressive restore logic here that restored dateAddedFilter
+    // from _lastDateAddedFilter. This was removed because it prevented users from clearing
+    // the "new models" filter. The filter is now visible in the UI and can be dismissed.
 
     const filtersActive = libraryFiltersAreActive();
 
@@ -634,6 +631,16 @@ function updateFilterIndicator(count) {
         </div>`;
       }
 
+      // Add dateAdded filter pill if active (shows when viewing "new models since scan")
+      if (window.dateAddedFilter) {
+        const filterDate = new Date(window.dateAddedFilter);
+        const dateStr = filterDate.toLocaleDateString() + ' ' + filterDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        message += `<div class="filter-pill filter-pill-date-added" data-filter-type="dateAdded">
+          New since: ${dateStr}
+          <span class="filter-remove" data-filter-type="dateAdded">×</span>
+        </div>`;
+      }
+
     message += `</div>`;
   }
 
@@ -770,8 +777,13 @@ function updateFilterIndicator(count) {
         case 'directory':
           window.currentDirectoryFilter = "";
           break;
+        case 'dateAdded':
+          window.dateAddedFilter = null;
+          window._lastDateAddedFilter = null;
+          console.log('[search.js] Cleared dateAddedFilter via filter pill');
+          break;
       }
-      
+
       if (typeof window.resetFilterSelectionAndDetails === 'function') {
         window.resetFilterSelectionAndDetails();
       }

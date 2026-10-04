@@ -8305,7 +8305,8 @@ async function loadDuplicateFiles(skipHashCheck = false, refreshOnly = false) {
 async function refreshGridModelAfterManageThumbnailsActiveChange(filePath) {
   await new Promise((r) => setTimeout(r, 200));
   try {
-    const preservedDateAddedFilter = window.dateAddedFilter || window._lastDateAddedFilter;
+    // Only preserve dateAddedFilter if currently set (don't restore from _lastDateAddedFilter)
+    const preservedDateAddedFilter = window.dateAddedFilter;
     const normalizedPath = normalizePathForComparison(filePath);
 
     const updatedModel = await window.electron.getModel(filePath);
@@ -8318,8 +8319,8 @@ async function refreshGridModelAfterManageThumbnailsActiveChange(filePath) {
         const filterDate = new Date(preservedDateAddedFilter);
         if (modelDateAdded < filterDate) return;
       }
+      // Restore only dateAddedFilter, not _lastDateAddedFilter (that's managed by user actions only)
       window.dateAddedFilter = preservedDateAddedFilter;
-      window._lastDateAddedFilter = preservedDateAddedFilter;
 
       for (const fileItem of document.querySelectorAll('.file-item')) {
         const itemPath = fileItem.getAttribute('data-filepath') || fileItem.dataset.filepath;
@@ -13015,8 +13016,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Use a small delay to ensure database write is complete
       setTimeout(async () => {
         try {
-          // Preserve dateAddedFilter if it's set (for new models view)
-          const preservedDateAddedFilter = window.dateAddedFilter || window._lastDateAddedFilter;
+          // Only preserve dateAddedFilter if currently set (don't restore from _lastDateAddedFilter)
+          const preservedDateAddedFilter = window.dateAddedFilter;
 
           // Always refresh primary-thumb cache so exiting new mode / re-search shows the new default
           const updatedModelEarly = await window.electron.getModel(data.filePath);
@@ -13025,18 +13026,18 @@ document.addEventListener('DOMContentLoaded', async () => {
           } else if (data.filePath) {
             invalidatePrimaryThumbnailCache(data.filePath);
           }
-          
+
           // If dateAddedFilter is active, we should only update the specific item, not refresh the whole grid
           // This prevents clearing the filter when thumbnails are generated
           if (preservedDateAddedFilter) {
             console.log('Thumbnail added while dateAddedFilter is active, updating item only');
-            
+
             // First, verify the model was updated in the database
             const updatedModel = updatedModelEarly;
             if (!updatedModel || !updatedModel.thumbnail) {
               return;
             }
-            
+
             // Check if this model matches the filter
             if (updatedModel.dateAdded) {
               const modelDateAdded = new Date(updatedModel.dateAdded);
@@ -13047,10 +13048,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
               }
             }
-            
-            // Restore the filter
+
+            // Restore only dateAddedFilter (not _lastDateAddedFilter - that's managed by user actions only)
             window.dateAddedFilter = preservedDateAddedFilter;
-            window._lastDateAddedFilter = preservedDateAddedFilter;
             
             // Try to find and update the specific DOM element only
             const allFileItems = document.querySelectorAll('.file-item');
@@ -13148,10 +13148,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (updateError) {
           console.error('Error refreshing grid after adding thumbnail:', updateError);
           // Fallback to full refresh on error, but preserve dateAddedFilter if set
-          const preservedDateAddedFilter = window.dateAddedFilter || window._lastDateAddedFilter;
+          const preservedDateAddedFilter = window.dateAddedFilter;
           if (preservedDateAddedFilter) {
             window.dateAddedFilter = preservedDateAddedFilter;
-            window._lastDateAddedFilter = preservedDateAddedFilter;
             const filteredModels = await window.electron.getModelsFiltered({
               dateAdded: preservedDateAddedFilter
             });
@@ -13186,19 +13185,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Use a small delay to ensure database write is complete
       setTimeout(async () => {
         try {
-          // Preserve dateAddedFilter if it's set (for new models view)
-          const preservedDateAddedFilter = window.dateAddedFilter || window._lastDateAddedFilter;
-          
+          // Only preserve dateAddedFilter if currently set (don't restore from _lastDateAddedFilter)
+          const preservedDateAddedFilter = window.dateAddedFilter;
+
           // If dateAddedFilter is active, we should only update the specific item, not refresh the whole grid
           if (preservedDateAddedFilter) {
             console.log('Thumbnail deleted while dateAddedFilter is active, updating item only');
-            
+
             // First, verify the model was updated in the database
             const updatedModel = await window.electron.getModel(data.filePath);
             if (!updatedModel) {
               return;
             }
-            
+
             // Check if this model matches the filter
             if (updatedModel.dateAdded) {
               const modelDateAdded = new Date(updatedModel.dateAdded);
@@ -13209,10 +13208,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
               }
             }
-            
-            // Restore the filter
+
+            // Restore only dateAddedFilter (not _lastDateAddedFilter - that's managed by user actions only)
             window.dateAddedFilter = preservedDateAddedFilter;
-            window._lastDateAddedFilter = preservedDateAddedFilter;
             
             // Try to find and update the specific DOM element only
             const allFileItems = document.querySelectorAll('.file-item');
@@ -13331,13 +13329,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.disableGridRefresh = false;
     const gridEl = document.querySelector('.file-grid');
     if (gridEl) gridEl.currentModels = null;
-    // Preserve dateAddedFilter if it's set
-    const preservedDateAddedFilter = window.dateAddedFilter || window._lastDateAddedFilter;
-    if (preservedDateAddedFilter) {
-      console.log('onRefreshGrid called, preserving dateAddedFilter:', preservedDateAddedFilter);
-      window.dateAddedFilter = preservedDateAddedFilter;
-      window._lastDateAddedFilter = preservedDateAddedFilter;
-    }
+    // Note: dateAddedFilter is preserved through performCombinedSearch if set
+    // Don't restore from _lastDateAddedFilter - that would make the filter "sticky"
     selectedModels.clear();
     document.querySelectorAll('.file-item.selected').forEach(item => item.classList.remove('selected'));
 
@@ -18776,11 +18769,8 @@ async function scanAndRenderDirectory(directoryPath, background = false, isStlHo
 
         await new Promise(resolve => setTimeout(resolve, 100));
 
-        if (!window.dateAddedFilter) {
-          console.warn('dateAddedFilter was cleared, resetting it');
-          window.dateAddedFilter = scanStartTime;
-          window._lastDateAddedFilter = scanStartTime;
-        }
+        // Note: Previously there was defensive restore logic here. Removed because
+        // if the filter was cleared during the delay, that's likely user intent.
 
         if (typeof window.performCombinedSearch === 'function') {
           await window.performCombinedSearch();
