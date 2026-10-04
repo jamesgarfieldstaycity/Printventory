@@ -630,6 +630,11 @@ window.openShopifyProductEditor = async function openShopifyProductEditor() {
   const dialog = document.getElementById('shopify-product-editor-dialog');
   if (!dialog) return;
 
+  // Close if already open to avoid showModal() error
+  if (dialog.open) {
+    dialog.close();
+  }
+
   // Get the current model from the model details panel
   const pathContainer = document.getElementById('path-tree-container');
   const modelPath = pathContainer?.getAttribute('data-file-path') || pathContainer?.dataset?.filePath || '';
@@ -690,6 +695,111 @@ window.openShopifyProductEditor = async function openShopifyProductEditor() {
 
   // Initialize photo size controls
   await window.initPhotoSizeControls();
+
+  // Add close handler to refresh the model's badge in the grid
+  const closeHandler = async () => {
+    dialog.removeEventListener('close', closeHandler);
+    // Refresh the specific model in the grid to update Shopify badge
+    if (window._shopifyEditorContext?.modelPath) {
+      try {
+        const updatedModel = await window.electron.getModel(window._shopifyEditorContext.modelPath);
+        if (updatedModel && typeof updateModelElement === 'function') {
+          await updateModelElement(updatedModel);
+        } else if (typeof refreshModelDisplay === 'function') {
+          await refreshModelDisplay();
+        }
+      } catch (e) {
+        console.warn('[Shopify] Could not refresh model badge on editor close:', e);
+      }
+    }
+  };
+  dialog.addEventListener('close', closeHandler);
+
+  dialog.showModal();
+};
+
+/**
+ * Open the Shopify product editor for a specific model path.
+ * Used when double-clicking a Shopify product group tile.
+ */
+window.openShopifyProductEditorForPath = async function openShopifyProductEditorForPath(modelPath) {
+  const dialog = document.getElementById('shopify-product-editor-dialog');
+  if (!dialog || !modelPath) return;
+
+  // Close if already open to avoid showModal() error
+  if (dialog.open) {
+    dialog.close();
+  }
+
+  // Get model folder
+  const modelFolder = modelPath.substring(0, modelPath.lastIndexOf('\\')) || modelPath.substring(0, modelPath.lastIndexOf('/'));
+
+  // Store context
+  window._shopifyEditorContext.modelPath = modelPath;
+  window._shopifyEditorContext.modelFolder = modelFolder;
+
+  // Get model from database
+  let model = null;
+  let modelName = '';
+  try {
+    model = await window.electron.getModel(modelPath);
+    window._shopifyEditorContext.modelId = model?.id;
+    modelName = model?.fileName || '';
+  } catch (e) {
+    console.error('Error getting model:', e);
+  }
+
+  // Check if there's an existing Shopify product for this model
+  try {
+    const existingProduct = await window.electron.getShopifyProductByModel(window._shopifyEditorContext.modelId);
+    if (existingProduct) {
+      window._shopifyEditorContext.existingProductId = existingProduct.id;
+      await window.populateShopifyEditorFromProduct(existingProduct);
+      updateShopifyLinkSection(existingProduct);
+    } else {
+      window._shopifyEditorContext.existingProductId = null;
+      await window.resetShopifyEditorForNewProduct(modelName, modelFolder);
+      updateShopifyLinkSection(null);
+    }
+  } catch (e) {
+    console.error('Error checking existing product:', e);
+    window._shopifyEditorContext.existingProductId = null;
+    await window.resetShopifyEditorForNewProduct(modelName, modelFolder);
+    updateShopifyLinkSection(null);
+  }
+
+  // Load dropdowns
+  await window.loadShopifyEditorDropdowns();
+
+  // Load photos
+  await window.refreshShopifyPhotos();
+
+  // Initialize SEO character counters
+  initShopifySeoCounters();
+
+  // Initialize description toggles
+  initShopifyDescriptionToggles();
+
+  // Initialize photo size controls
+  await window.initPhotoSizeControls();
+
+  // Add close handler to refresh the model's badge in the grid
+  const closeHandler = async () => {
+    dialog.removeEventListener('close', closeHandler);
+    if (window._shopifyEditorContext?.modelPath) {
+      try {
+        const updatedModel = await window.electron.getModel(window._shopifyEditorContext.modelPath);
+        if (updatedModel && typeof updateModelElement === 'function') {
+          await updateModelElement(updatedModel);
+        } else if (typeof refreshModelDisplay === 'function') {
+          await refreshModelDisplay();
+        }
+      } catch (e) {
+        console.warn('[Shopify] Could not refresh model badge on editor close:', e);
+      }
+    }
+  };
+  dialog.addEventListener('close', closeHandler);
 
   dialog.showModal();
 };
@@ -1187,6 +1297,12 @@ window.refreshLiveShopifyData = async function refreshLiveShopifyData() {
     // Render variants table
     renderShopifyVariantsTable(shopify.variants || []);
 
+    // Populate variant assignments UI
+    await populateVariantAssignments();
+
+    // Initialize split button for multi-file products
+    initOpenModelSplitButton();
+
     // Render photos for linked products
     if (shopify.media && shopify.media.length > 0) {
       // Store baseline for diff comparison (deep copy to prevent mutation)
@@ -1237,6 +1353,279 @@ function extractFilenameFromUrl(url) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Populate the variant assignments UI in the Shopify editor.
+ * Uses a variant-first approach: each Shopify variant is a row, with suggested file matches.
+ * Suggestions require explicit confirmation - never auto-applied.
+ */
+async function populateVariantAssignments() {
+  const container = document.getElementById('shopify-variant-list');
+  const countEl = document.getElementById('variant-assignment-count');
+  const section = document.getElementById('shopify-variant-assignments-section');
+  const primarySelect = document.getElementById('shopify-primary-file-select');
+
+  if (!container) return;
+
+  // Get the folder path from context
+  const folderPath = window._shopifyEditorContext?.modelFolder;
+  if (!folderPath) {
+    container.innerHTML = '<div class="shopify-variant-empty">No folder path available</div>';
+    return;
+  }
+
+  // Normalize folder path for the API call
+  const normalizedPath = folderPath.replace(/\\/g, '/');
+
+  try {
+    const data = await window.electron.getProductVariantsWithSuggestions(normalizedPath);
+
+    if (!data || !data.product) {
+      container.innerHTML = '<div class="shopify-variant-empty">Product not linked to Shopify</div>';
+      if (section) section.style.display = 'none';
+      return;
+    }
+
+    // Store data in context
+    window._shopifyEditorContext.variantData = data;
+
+    // Check if variant assignment UI is useful for this product
+    // Show if: multiple files OR multiple variants exist
+    const hasMultipleFiles = data.files && data.files.length > 1;
+    const hasMultipleVariants = data.variants && data.variants.length > 1;
+    const showVariantSection = hasMultipleFiles || hasMultipleVariants;
+
+    if (!showVariantSection) {
+      // Single-file, single-variant product - hide variant assignment section
+      if (section) section.style.display = 'none';
+      return;
+    }
+
+    // Show the section (collapsed by default - user opens when they want it)
+    // Don't set section.open = true - let user choose to expand
+    if (section) section.style.display = 'block';
+
+    // Populate primary file dropdown
+    if (primarySelect && data.files.length > 0) {
+      const currentPrimary = data.files.find(f => f.isPrimary) || data.files[0];
+      primarySelect.innerHTML = data.files.map(f =>
+        `<option value="${f.id}" ${f.id === currentPrimary.id ? 'selected' : ''}>${escapeHtml(f.fileName)}</option>`
+      ).join('');
+      primarySelect.closest('.shopify-primary-control')?.classList.remove('hidden');
+    }
+
+    // Update count
+    const assignedCount = data.variants.filter(v => v.assignedFile).length;
+    if (countEl) {
+      countEl.textContent = `(${assignedCount}/${data.variants.length} assigned)`;
+    }
+
+    // Build variant-first HTML with thumbnails
+    let html = '';
+    for (const variant of data.variants) {
+      const hasAssignment = !!variant.assignedFile;
+      const hasSuggestion = !hasAssignment && variant.suggestion;
+      const statusClass = hasAssignment ? 'assigned' : hasSuggestion ? 'suggested' : 'unassigned';
+
+      // Get thumbnail from assigned file or suggested file
+      const thumbnailFile = hasAssignment ? variant.assignedFile : (hasSuggestion ? variant.suggestion.file : null);
+      const thumbnail = thumbnailFile?.thumbnail;
+      // Parse first thumbnail if multiple (separated by ::)
+      const thumbSrc = thumbnail && thumbnail !== '3d.png'
+        ? (thumbnail.includes('::') ? thumbnail.split('::')[0] : thumbnail)
+        : '';
+
+      html += `
+        <div class="shopify-variant-row ${statusClass}" data-variant-id="${variant.shopify_variant_id}">
+          <div class="variant-row-thumbnail">
+            ${thumbSrc ? `<img src="${thumbSrc}" alt="" loading="lazy">` : ''}
+          </div>
+          <div class="variant-info">
+            <span class="variant-name">${escapeHtml(variant.option_value || 'Unknown')}</span>
+            ${variant.sku ? `<span class="variant-sku">${escapeHtml(variant.sku)}</span>` : ''}
+          </div>
+          <div class="variant-file-assignment">
+            ${hasAssignment ? `
+              <span class="assigned-file" title="${escapeHtml(variant.assignedFile.filePath)}">${escapeHtml(variant.assignedFile.fileName)}</span>
+              <div class="variant-buttons">
+                <button type="button" class="variant-action-btn replace-file-btn" data-variant-id="${variant.shopify_variant_id}" data-option-value="${escapeHtml(variant.option_value || '')}">Replace</button>
+                <button type="button" class="variant-action-btn open-file-btn" data-file-path="${escapeHtml(variant.assignedFile.filePath)}" title="Open in slicer">Open</button>
+              </div>
+            ` : hasSuggestion ? `
+              <span class="suggested-file">
+                <span class="suggestion-filename">${escapeHtml(variant.suggestion.file.fileName)}</span>
+                <span class="match-score">${Math.round(variant.suggestion.score * 100)}%</span>
+              </span>
+              <div class="variant-buttons">
+                <button type="button" class="variant-action-btn confirm-btn"
+                  data-variant-id="${variant.shopify_variant_id}"
+                  data-model-id="${variant.suggestion.file.id}"
+                  data-option-value="${escapeHtml(variant.option_value || '')}">Confirm</button>
+                <button type="button" class="variant-action-btn select-file-btn" data-variant-id="${variant.shopify_variant_id}" data-option-value="${escapeHtml(variant.option_value || '')}">Other...</button>
+              </div>
+            ` : `
+              <span class="no-assignment">No file assigned</span>
+              <div class="variant-buttons">
+                <button type="button" class="variant-action-btn select-file-btn" data-variant-id="${variant.shopify_variant_id}" data-option-value="${escapeHtml(variant.option_value || '')}">Select file...</button>
+              </div>
+            `}
+          </div>
+        </div>
+      `;
+    }
+
+    container.innerHTML = html;
+    attachVariantAssignmentHandlers(container, data, normalizedPath, countEl);
+
+    // Add primary file change handler
+    if (primarySelect) {
+      primarySelect.onchange = async () => {
+        const newPrimaryId = parseInt(primarySelect.value, 10);
+        try {
+          await window.electron.setPrimaryFile(normalizedPath, newPrimaryId);
+        } catch (err) {
+          console.error('Error setting primary file:', err);
+          alert('Failed to set primary file: ' + err.message);
+        }
+      };
+    }
+
+  } catch (err) {
+    console.error('Error loading variant assignments:', err);
+    container.innerHTML = `<div class="shopify-variant-empty">Error: ${err.message}</div>`;
+  }
+}
+
+/**
+ * Attach event handlers for variant assignment buttons.
+ */
+function attachVariantAssignmentHandlers(container, data, folderPath, countEl) {
+  // Confirm suggestion button
+  container.querySelectorAll('.confirm-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const variantId = btn.dataset.variantId;
+      const modelId = parseInt(btn.dataset.modelId, 10);
+      const optionValue = btn.dataset.optionValue;
+
+      try {
+        await window.electron.assignFileVariant(folderPath, modelId, variantId, optionValue);
+        await populateVariantAssignments(); // Refresh UI
+      } catch (err) {
+        console.error('Error confirming variant:', err);
+        alert('Failed to assign variant: ' + err.message);
+      }
+    });
+  });
+
+  // Select file button (manual picker)
+  container.querySelectorAll('.select-file-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const variantId = btn.dataset.variantId;
+      const optionValue = btn.dataset.optionValue;
+      showFilePickerForVariant(variantId, optionValue, data.files, folderPath);
+    });
+  });
+
+  // Replace file button
+  container.querySelectorAll('.replace-file-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const variantId = btn.dataset.variantId;
+      const optionValue = btn.dataset.optionValue;
+      showFilePickerForVariant(variantId, optionValue, data.files, folderPath);
+    });
+  });
+
+  // Open file button
+  container.querySelectorAll('.open-file-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const filePath = btn.dataset.filePath;
+      try {
+        await window.electron.openPath(filePath);
+      } catch (err) {
+        console.error('Error opening file:', err);
+        alert('Failed to open file: ' + err.message);
+      }
+    });
+  });
+}
+
+/**
+ * Show a file picker modal for manually selecting a file for a variant.
+ */
+function showFilePickerForVariant(variantId, optionValue, files, folderPath) {
+  // Remove any existing picker
+  document.getElementById('variant-file-picker')?.remove();
+
+  // Create picker modal
+  const picker = document.createElement('div');
+  picker.id = 'variant-file-picker';
+  picker.className = 'variant-file-picker-overlay';
+  picker.innerHTML = `
+    <div class="variant-file-picker-modal">
+      <div class="variant-file-picker-header">
+        <h3>Select file for: ${escapeHtml(optionValue || 'Unknown variant')}</h3>
+        <button type="button" class="close-picker-btn">&times;</button>
+      </div>
+      <div class="variant-file-picker-list">
+        ${files.map(f => `
+          <div class="variant-file-option" data-model-id="${f.id}">
+            <span class="file-option-name">${escapeHtml(f.fileName)}</span>
+            ${f.assignedVariantId ? `<span class="file-option-assigned">Assigned to: ${escapeHtml(f.assignedOptionValue || 'another variant')}</span>` : ''}
+            <button type="button" class="select-this-file-btn" data-model-id="${f.id}">Select</button>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+
+  // Append to the dialog element so it appears above it (dialog uses top layer)
+  const dialog = document.getElementById('shopify-product-editor-dialog');
+  if (dialog) {
+    dialog.appendChild(picker);
+  } else {
+    document.body.appendChild(picker);
+  }
+
+  // Close button
+  picker.querySelector('.close-picker-btn').addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    picker.remove();
+  });
+
+  // Click outside to close
+  picker.addEventListener('click', (e) => {
+    if (e.target === picker) {
+      e.stopPropagation();
+      picker.remove();
+    }
+  });
+
+  // Select buttons
+  picker.querySelectorAll('.select-this-file-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const modelId = parseInt(btn.dataset.modelId, 10);
+      try {
+        await window.electron.assignFileVariant(folderPath, modelId, variantId, optionValue);
+        picker.remove();
+        await populateVariantAssignments(); // Refresh UI
+      } catch (err) {
+        console.error('Error assigning variant:', err);
+        alert('Failed to assign variant: ' + err.message);
+      }
+    });
+  });
 }
 
 /**
@@ -1769,6 +2158,33 @@ window.openModelInSlicer = async function openModelInSlicer() {
     alert(`Failed to open model: ${e.message}`);
   }
 };
+
+/**
+ * Initialize the split button for Open Model.
+ * Shows dropdown for multi-file products that scrolls to variant section.
+ */
+function initOpenModelSplitButton() {
+  const dropdownBtn = document.getElementById('shopify-open-model-dropdown');
+  const variantSection = document.getElementById('shopify-variant-assignments-section');
+
+  if (!dropdownBtn) return;
+
+  // Check if this is a multi-file product (variant section is visible)
+  const isMultiFile = variantSection && variantSection.style.display !== 'none';
+
+  if (isMultiFile) {
+    dropdownBtn.style.display = '';
+    dropdownBtn.onclick = () => {
+      // Expand and scroll to variant assignments section
+      if (variantSection) {
+        variantSection.open = true;
+        variantSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    };
+  } else {
+    dropdownBtn.style.display = 'none';
+  }
+}
 
 /**
  * Push updates to a linked Shopify product.
@@ -5669,6 +6085,45 @@ function syncModelNewBadge(fileItem, model) {
   }
 }
 
+/** Keep the Shopify badge in sync with model's shopify linking status. */
+function syncModelShopifyBadge(fileItem, model) {
+  if (!fileItem) return;
+
+  // Remove existing Shopify badge
+  fileItem.querySelector(':scope > .shopify-status')?.remove();
+
+  // Only add badge if linked
+  if (!model.shopifyLinked) return;
+
+  const shopifyStatus = document.createElement('div');
+  shopifyStatus.className = 'shopify-status';
+
+  // Build the badge text based on available info
+  // Variant assignment is optional - don't show warning badges for multi-file products
+  if (model.shopifyVariantLabel) {
+    // Has variant assigned - show short product name + variant
+    const shortTitle = model.shopifyProductTitle
+      ? (model.shopifyProductTitle.length > 20
+          ? model.shopifyProductTitle.substring(0, 18) + '…'
+          : model.shopifyProductTitle)
+      : 'Shopify';
+    shopifyStatus.textContent = `${shortTitle} — ${model.shopifyVariantLabel}`;
+    shopifyStatus.title = `${model.shopifyProductTitle || 'Shopify Product'}: ${model.shopifyVariantLabel}`;
+  } else {
+    // Linked to Shopify - show product title or plain badge
+    // No "Variant needed" warning - variant mapping is user's choice
+    const shortTitle = model.shopifyProductTitle
+      ? (model.shopifyProductTitle.length > 20
+          ? model.shopifyProductTitle.substring(0, 18) + '…'
+          : model.shopifyProductTitle)
+      : 'Shopify';
+    shopifyStatus.textContent = shortTitle;
+    shopifyStatus.title = model.shopifyProductTitle ? `Linked to: ${model.shopifyProductTitle}` : 'Linked to Shopify';
+  }
+
+  fileItem.appendChild(shopifyStatus);
+}
+
 function deriveBundleFieldsForModel(model) {
   const filePath = model?.filePath || '';
   if (!filePath || filePath.startsWith('url::')) {
@@ -5914,7 +6369,8 @@ async function updateModelElement(filePath) {
     }
 
     syncModelNewBadge(existingElement, model);
-    
+    syncModelShopifyBadge(existingElement, model);
+
     // Check if we're in detailed view
     const isDetailedView = existingElement.classList.contains('file-item-detailed');
     console.log('updateModelElement: isDetailedView?', isDetailedView);
@@ -24862,12 +25318,33 @@ function createModelItem(model, viewMode = null, thumbPriority = THUMB_PRIORITY_
     item.appendChild(archiveStatus);
   }
 
-  // Shopify linked status badge
+  // Shopify linked status badge with variant info
   if (model.shopifyLinked) {
     const shopifyStatus = document.createElement('div');
     shopifyStatus.className = 'shopify-status';
-    shopifyStatus.textContent = 'Shopify';
-    shopifyStatus.title = 'Linked to Shopify';
+
+    // Build the badge text based on available info
+    // Variant assignment is optional - don't show warning badges for multi-file products
+    if (model.shopifyVariantLabel) {
+      // Has variant assigned - show short product name + variant
+      const shortTitle = model.shopifyProductTitle
+        ? (model.shopifyProductTitle.length > 20
+            ? model.shopifyProductTitle.substring(0, 18) + '…'
+            : model.shopifyProductTitle)
+        : 'Shopify';
+      shopifyStatus.textContent = `${shortTitle} — ${model.shopifyVariantLabel}`;
+      shopifyStatus.title = `${model.shopifyProductTitle || 'Shopify Product'}: ${model.shopifyVariantLabel}`;
+    } else {
+      // Linked to Shopify - show product title or plain badge
+      // No "Variant needed" warning - variant mapping is user's choice
+      const shortTitle = model.shopifyProductTitle
+        ? (model.shopifyProductTitle.length > 20
+            ? model.shopifyProductTitle.substring(0, 18) + '…'
+            : model.shopifyProductTitle)
+        : 'Shopify';
+      shopifyStatus.textContent = shortTitle;
+      shopifyStatus.title = model.shopifyProductTitle ? `Linked to: ${model.shopifyProductTitle}` : 'Linked to Shopify';
+    }
     item.appendChild(shopifyStatus);
   }
 
@@ -26423,6 +26900,7 @@ function isProgressiveModelListExtension(prevModels, nextModels) {
 const parentModelExpandedGroups = new Set();
 const zipArchiveExpandedGroups = new Set();
 const bundleExpandedGroups = new Set();
+const shopifyProductExpandedGroups = new Set();
 let virtualGridGroupLayoutGen = 0;
 
 // Parent Model grouping display control - when false, parentModel-based grouping is disabled
@@ -26656,12 +27134,22 @@ function buildParentModelDisplayRecords(models) {
     getGroupKeyFromModel: getBundleGroupKey
   });
 
+  // Shopify product grouping - groups files sharing the same Shopify product
+  // Uses folder_path from shopify_products table, completely separate from bundleKey/parentModel
+  const shopifyGroupedRecords = buildGroupedDisplayRecords(bundleGroupedRecords, {
+    groupKind: 'shopifyProduct',
+    keyPrefix: 'shopify',
+    expandedSet: shopifyProductExpandedGroups,
+    getGroupLabelFromModel: (model) => model?.shopifyProductTitle || '',
+    getGroupKeyFromModel: (model) => model?.shopifyGroupKey || ''
+  });
+
   // Parent model grouping - only when enabled via toggle
   if (!parentModelGroupingEnabled) {
-    return bundleGroupedRecords;
+    return shopifyGroupedRecords;
   }
 
-  return buildGroupedDisplayRecords(bundleGroupedRecords, {
+  return buildGroupedDisplayRecords(shopifyGroupedRecords, {
     groupKind: 'parentModel',
     keyPrefix: 'parent',
     expandedSet: parentModelExpandedGroups,
@@ -26744,8 +27232,12 @@ function getPrimaryThumbnailFromString(thumbnailString) {
   return primary || null;
 }
 
+/** Cache mapping thumbnail URL to child filePath for each group */
+const groupThumbnailToPathMap = {};
+
 function getParentModelThumbnails(children, groupKey = '') {
   const thumbnails = [];
+  const thumbToPath = {};
   const seen = new Set();
 
   // One primary thumbnail per child — not every embedded 3MF image.
@@ -26755,6 +27247,9 @@ function getParentModelThumbnails(children, groupKey = '') {
     if (!primary || seen.has(primary)) continue;
     seen.add(primary);
     thumbnails.push(primary);
+    if (child.filePath) {
+      thumbToPath[primary] = child.filePath;
+    }
   }
 
   const preferred = groupThumbnailPreferences[groupKey];
@@ -26769,6 +27264,14 @@ function getParentModelThumbnails(children, groupKey = '') {
         thumbnails.length = MAX_GROUP_CAROUSEL_THUMBNAILS;
       }
     }
+  }
+
+  // Store the mapping for later lookup (merge with existing)
+  if (groupKey) {
+    if (!groupThumbnailToPathMap[groupKey]) {
+      groupThumbnailToPathMap[groupKey] = {};
+    }
+    Object.assign(groupThumbnailToPathMap[groupKey], thumbToPath);
   }
 
   return thumbnails;
@@ -26871,12 +27374,21 @@ async function hydrateParentModelGroupThumbnails(thumbnailWrap, imageElement, ch
     thumbnails = await filterNonEmptyThumbnails(
       getParentModelThumbnails(children, groupKey)
     );
+  } else {
+    // Still build the thumbnail-to-path mapping even when using cached thumbnails
+    getParentModelThumbnails(children, groupKey);
   }
   const seen = new Set(thumbnails);
   if (thumbnails.length > 0) {
     await applyThumbs(thumbnails);
   }
-  if (thumbnails.length >= MAX_GROUP_CAROUSEL_THUMBNAILS) return;
+
+  // Check if mapping is already populated for this group
+  const mappingExists = groupKey && groupThumbnailToPathMap[groupKey] &&
+    Object.keys(groupThumbnailToPathMap[groupKey]).length > 0;
+
+  // Only skip IPC fetch if we have enough thumbnails AND the mapping is already populated
+  if (thumbnails.length >= MAX_GROUP_CAROUSEL_THUMBNAILS && mappingExists) return;
 
   const candidates = (children || []).filter((child) => child.filePath);
   const withStored = candidates.filter((c) => childHasStoredThumbnail(c));
@@ -26913,14 +27425,24 @@ async function hydrateParentModelGroupThumbnails(thumbnailWrap, imageElement, ch
     return null;
   };
 
+  // Ensure we have a mapping object for this group
+  if (groupKey && !groupThumbnailToPathMap[groupKey]) {
+    groupThumbnailToPathMap[groupKey] = {};
+  }
+
   const firstWave = ordered.slice(0, Math.min(6, MAX_GROUP_CAROUSEL_THUMBNAILS));
   if (firstWave.length > 0) {
     const results = await Promise.all(firstWave.map((child) => fetchPrimaryForChild(child)));
     if (isStale()) return;
-    for (const primary of results) {
+    for (let i = 0; i < results.length; i++) {
+      const primary = results[i];
       if (!primary || seen.has(primary)) continue;
       seen.add(primary);
       thumbnails.push(primary);
+      // Store thumbnail-to-path mapping
+      if (groupKey && firstWave[i]?.filePath) {
+        groupThumbnailToPathMap[groupKey][primary] = firstWave[i].filePath;
+      }
       if (thumbnails.length >= MAX_GROUP_CAROUSEL_THUMBNAILS) break;
     }
     if (thumbnails.length > 0) {
@@ -26936,6 +27458,10 @@ async function hydrateParentModelGroupThumbnails(thumbnailWrap, imageElement, ch
     if (!primary || seen.has(primary)) continue;
     seen.add(primary);
     thumbnails.push(primary);
+    // Store thumbnail-to-path mapping
+    if (groupKey && child?.filePath) {
+      groupThumbnailToPathMap[groupKey][primary] = child.filePath;
+    }
     await applyThumbs(thumbnails);
   }
 
@@ -27399,8 +27925,11 @@ function createParentModelGroupItem(groupRecord, viewMode = null) {
       ? bundleExpandedGroups
       : groupRecord?.groupKind === 'zip'
         ? zipArchiveExpandedGroups
-        : parentModelExpandedGroups;
+        : groupRecord?.groupKind === 'shopifyProduct'
+          ? shopifyProductExpandedGroups
+          : parentModelExpandedGroups;
   const isParentModelGroup = groupRecord?.groupKind === 'parentModel';
+  const isShopifyProductGroup = groupRecord?.groupKind === 'shopifyProduct';
   const bundleKind = groupRecord?.groupKind === 'bundle'
     ? (groupRecord.children?.[0]?.bundleKind || 'folder')
     : '';
@@ -27439,7 +27968,9 @@ function createParentModelGroupItem(groupRecord, viewMode = null) {
     groupBadge.classList.add(groupRecord.expanded ? 'is-expanded' : 'is-collapsed');
     groupBadge.title = groupRecord?.groupKind === 'bundle'
       ? `${bundleKind === 'zip' ? 'ZIP bundle' : 'Folder bundle'} (${groupRecord.expanded ? 'expanded' : 'collapsed'})`
-      : `${groupRecord?.groupKind === 'zip' ? 'ZIP archive group' : 'Parent model group'} (${groupRecord.expanded ? 'expanded' : 'collapsed'})`;
+      : groupRecord?.groupKind === 'shopifyProduct'
+        ? `Shopify product: ${groupLabel} (${groupRecord.expanded ? 'expanded' : 'collapsed'})`
+        : `${groupRecord?.groupKind === 'zip' ? 'ZIP archive group' : 'Parent model group'} (${groupRecord.expanded ? 'expanded' : 'collapsed'})`;
     for (let i = 0; i < 3; i++) {
       groupBadge.appendChild(document.createElement('span'));
     }
@@ -27493,6 +28024,7 @@ function createParentModelGroupItem(groupRecord, viewMode = null) {
   const childCount = groupRecord.children.length;
   const printLabel = bundlePrint ? bundlePrint.label : `${printedCount}/${childCount} printed`;
   const isBundleGroup = groupRecord?.groupKind === 'bundle' || groupRecord?.groupKind === 'zip';
+  const isShopifyGroup = groupRecord?.groupKind === 'shopifyProduct';
   const kindLabel = bundleKind === 'zip' || groupRecord?.groupKind === 'zip' ? 'zip archive' : (groupRecord?.groupKind === 'bundle' ? 'folder' : '');
 
   if (view === 'list') {
@@ -27548,9 +28080,11 @@ function createParentModelGroupItem(groupRecord, viewMode = null) {
 
     const archiveText = isBundleGroup
       ? `${childCount} part${childCount === 1 ? '' : 's'}${kindLabel ? ` • ${kindLabel}` : ''}`
-      : `${childCount} model${childCount === 1 ? '' : 's'}`;
+      : isShopifyGroup
+        ? `${childCount} variant${childCount === 1 ? '' : 's'} • Shopify`
+        : `${childCount} model${childCount === 1 ? '' : 's'}`;
     const archiveCol = createListViewColumnCell('archive', 'archive-status-column', archiveText);
-    archiveCol.title = isBundleGroup ? 'Right-click for Preview and more options' : archiveText;
+    archiveCol.title = isBundleGroup ? 'Right-click for Preview and more options' : (isShopifyGroup ? 'Shopify product with multiple files' : archiveText);
     fileInfo.appendChild(archiveCol);
 
     item.appendChild(thumbnailWrap);
@@ -27562,6 +28096,9 @@ function createParentModelGroupItem(groupRecord, viewMode = null) {
     if (groupRecord?.groupKind === 'bundle') {
       meta.textContent = `${childCount} part${childCount === 1 ? '' : 's'} • ${kindLabel || 'folder'} • ${printLabel}`;
       meta.title = 'Right-click for Preview and more options';
+    } else if (groupRecord?.groupKind === 'shopifyProduct') {
+      meta.textContent = `${childCount} variant${childCount === 1 ? '' : 's'} • Shopify`;
+      meta.title = 'Shopify product with multiple files';
     } else {
       meta.textContent = `${childCount} model${childCount === 1 ? '' : 's'} • ${printLabel}`;
     }
@@ -27673,6 +28210,9 @@ function createParentModelGroupItem(groupRecord, viewMode = null) {
     toggleGroup();
   });
 
+  // Track pending click for double-click detection on Shopify groups
+  let pendingClickTimeout = null;
+
   item.addEventListener('click', (event) => {
     if (wasTileTapSuppressed(item, event)) return;
     if (event.target.closest('.parent-model-group-chevron')) return;
@@ -27682,6 +28222,7 @@ function createParentModelGroupItem(groupRecord, viewMode = null) {
     if (event.target.closest('.thumbnail-nav-left, .thumbnail-nav-right, .thumbnail-menu-button')) return;
     event.preventDefault();
     event.stopPropagation();
+
     const isBundle = isBundleGroupKind();
     if (isMobileUiActive() && view === 'preview') {
       if (item.classList.contains('is-mobile-focus')) {
@@ -27695,14 +28236,73 @@ function createParentModelGroupItem(groupRecord, viewMode = null) {
       focusMobileTile(item);
       return;
     }
-    toggleGroupFromCard();
+
+    // For Shopify groups, delay single-click to allow double-click detection
+    if (isShopifyProductGroup) {
+      if (pendingClickTimeout) clearTimeout(pendingClickTimeout);
+      pendingClickTimeout = setTimeout(() => {
+        pendingClickTimeout = null;
+        toggleGroupFromCard();
+      }, 250);
+    } else {
+      toggleGroupFromCard();
+    }
   });
+
   item.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       toggleGroupFromCard();
     }
   });
+
+  // Double-click on Shopify product groups opens the Shopify editor
+  item.addEventListener('dblclick', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (isShopifyProductGroup) {
+      // Cancel pending single-click
+      if (pendingClickTimeout) {
+        clearTimeout(pendingClickTimeout);
+        pendingClickTimeout = null;
+      }
+      try {
+        // Find the child matching the currently displayed thumbnail
+        let targetFilePath = null;
+        const thumbWrap = item.querySelector('.parent-model-group-thumbnail');
+        if (thumbWrap && groupRecord.groupKey) {
+          const thumbsJson = thumbWrap.dataset.thumbnails;
+          const currentIdx = parseInt(thumbWrap.dataset.currentIndex, 10) || 0;
+          if (thumbsJson) {
+            try {
+              const thumbs = JSON.parse(thumbsJson);
+              const currentThumb = thumbs[currentIdx];
+              if (currentThumb) {
+                // Use cached mapping for fast lookup
+                const mapping = groupThumbnailToPathMap[groupRecord.groupKey];
+                if (mapping && mapping[currentThumb]) {
+                  targetFilePath = mapping[currentThumb];
+                }
+              }
+            } catch (e) {
+              // JSON parse error, fall back to default
+            }
+          }
+        }
+        // Fall back to primary or first child
+        if (!targetFilePath) {
+          const fallback = groupRecord.children?.find(c => c.isPrimary) || groupRecord.children?.[0];
+          targetFilePath = fallback?.filePath;
+        }
+        if (targetFilePath && typeof window.openShopifyProductEditorForPath === 'function') {
+          await window.openShopifyProductEditorForPath(targetFilePath);
+        }
+      } catch (err) {
+        console.error('[Shopify] Error in dblclick handler:', err);
+      }
+    }
+  });
+
   item.addEventListener('contextmenu', async (event) => {
     suppressTileTap(item);
     event.preventDefault();

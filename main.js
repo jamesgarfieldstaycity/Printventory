@@ -2788,9 +2788,23 @@ const SHOPIFY_LINKED_FLAG_QUALIFIED =
   "OR EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.folder_path IS NOT NULL AND sp.folder_path != '' AND REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%') " +
   "THEN 1 ELSE 0 END AS shopifyLinked";
 
-const MODEL_LIST_COLUMNS = `${MODEL_DETAIL_COLUMNS}, ${MODEL_LIST_THUMB_FLAGS}, ${SHOPIFY_LINKED_FLAG}`;
+/** Shopify variant info - returns product title, variant option value, multi-file flag, and group key for display */
+// shopifyIsMultiFile counts actual 3MF/STL files in the product's folder, not shopify_product_files rows
+// shopifyGroupKey is used for grid grouping - separate from bundleKey/parentModel grouping
+const SHOPIFY_VARIANT_INFO =
+  "(SELECT spf.variant_option_value FROM shopify_product_files spf WHERE spf.model_id = id LIMIT 1) AS shopifyVariantLabel, " +
+  "(SELECT sp.title FROM shopify_products sp WHERE sp.model_id = id OR (sp.folder_path IS NOT NULL AND sp.folder_path != '' AND REPLACE(filePath, CHAR(92), '/') LIKE sp.folder_path || '/%') LIMIT 1) AS shopifyProductTitle, " +
+  "(SELECT CASE WHEN (SELECT COUNT(*) FROM models m2 WHERE REPLACE(m2.filePath, CHAR(92), '/') LIKE sp3.folder_path || '/%' AND (LOWER(m2.fileName) LIKE '%.3mf' OR LOWER(m2.fileName) LIKE '%.stl')) > 1 THEN 1 ELSE 0 END FROM shopify_products sp3 WHERE sp3.model_id = id OR (sp3.folder_path IS NOT NULL AND sp3.folder_path != '' AND REPLACE(filePath, CHAR(92), '/') LIKE sp3.folder_path || '/%') LIMIT 1) AS shopifyIsMultiFile, " +
+  "(SELECT sp.folder_path FROM shopify_products sp WHERE sp.model_id = id OR (sp.folder_path IS NOT NULL AND sp.folder_path != '' AND REPLACE(filePath, CHAR(92), '/') LIKE sp.folder_path || '/%') LIMIT 1) AS shopifyGroupKey";
+const SHOPIFY_VARIANT_INFO_QUALIFIED =
+  "(SELECT spf.variant_option_value FROM shopify_product_files spf WHERE spf.model_id = models.id LIMIT 1) AS shopifyVariantLabel, " +
+  "(SELECT sp.title FROM shopify_products sp WHERE sp.model_id = models.id OR (sp.folder_path IS NOT NULL AND sp.folder_path != '' AND REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%') LIMIT 1) AS shopifyProductTitle, " +
+  "(SELECT CASE WHEN (SELECT COUNT(*) FROM models m2 WHERE REPLACE(m2.filePath, CHAR(92), '/') LIKE sp3.folder_path || '/%' AND (LOWER(m2.fileName) LIKE '%.3mf' OR LOWER(m2.fileName) LIKE '%.stl')) > 1 THEN 1 ELSE 0 END FROM shopify_products sp3 WHERE sp3.model_id = models.id OR (sp3.folder_path IS NOT NULL AND sp3.folder_path != '' AND REPLACE(models.filePath, CHAR(92), '/') LIKE sp3.folder_path || '/%') LIMIT 1) AS shopifyIsMultiFile, " +
+  "(SELECT sp.folder_path FROM shopify_products sp WHERE sp.model_id = models.id OR (sp.folder_path IS NOT NULL AND sp.folder_path != '' AND REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%') LIMIT 1) AS shopifyGroupKey";
+
+const MODEL_LIST_COLUMNS = `${MODEL_DETAIL_COLUMNS}, ${MODEL_LIST_THUMB_FLAGS}, ${SHOPIFY_LINKED_FLAG}, ${SHOPIFY_VARIANT_INFO}`;
 const MODEL_LIST_COLUMNS_QUALIFIED =
-  `models.id, models.filePath, models.fileName, models.designer, models.source, models.notes, models.printed, models.print_status, models.print_count, models.last_printed_at, models.parentModel, models.hash, models.size, models.license, models.modifiedDate, models.dateAdded, models.isNew, models.rating, models.favorite, models.bundleKey, models.bundleLabel, models.bundleKind, ${MODEL_LIST_THUMB_FLAGS_QUALIFIED}, ${SHOPIFY_LINKED_FLAG_QUALIFIED}`;
+  `models.id, models.filePath, models.fileName, models.designer, models.source, models.notes, models.printed, models.print_status, models.print_count, models.last_printed_at, models.parentModel, models.hash, models.size, models.license, models.modifiedDate, models.dateAdded, models.isNew, models.rating, models.favorite, models.bundleKey, models.bundleLabel, models.bundleKind, ${MODEL_LIST_THUMB_FLAGS_QUALIFIED}, ${SHOPIFY_LINKED_FLAG_QUALIFIED}, ${SHOPIFY_VARIANT_INFO_QUALIFIED}`;
 
 function applyThumbnailFlags(row) {
   if (!row) return row;
@@ -3914,10 +3928,33 @@ function sendSupportLogsFromMenu() {
 }
 
 async function createWindow() {
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+  const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+
+  // Read saved window state
+  const savedBounds = getSettingValueOr('windowBounds', '');
+  const wasMaximized = getSettingValueOr('windowMaximized', '0') === '1';
+  let windowBounds = {
+    width: Math.min(1600, screenWidth),
+    height: Math.min(1000, screenHeight)
+  };
+
+  // Parse saved bounds if available
+  if (savedBounds) {
+    try {
+      const parsed = JSON.parse(savedBounds);
+      // Validate bounds are reasonable and on-screen
+      if (parsed.width > 400 && parsed.height > 300 &&
+          parsed.x >= -50 && parsed.y >= -50 &&
+          parsed.x < screenWidth && parsed.y < screenHeight) {
+        windowBounds = parsed;
+      }
+    } catch (e) {
+      console.warn('Could not parse saved window bounds:', e);
+    }
+  }
+
   mainWindow = new BrowserWindow({
-    width: Math.min(1600, width),
-    height: Math.min(1000, height),
+    ...windowBounds,
     backgroundColor: '#1e1e2e', // Match app's dark theme to prevent white flash
     show: false, // Don't show until ready to prevent white flash
     webPreferences: {
@@ -3931,6 +3968,27 @@ async function createWindow() {
       webSecurity: true // Keep web security enabled, but allow puter.com API calls
     }
   });
+
+  // Maximize if it was maximized before
+  if (wasMaximized) {
+    mainWindow.maximize();
+  }
+
+  // Save window state on changes
+  const saveWindowState = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const isMaximized = mainWindow.isMaximized();
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('windowMaximized', isMaximized ? '1' : '0');
+    if (!isMaximized) {
+      // Only save bounds when not maximized
+      const bounds = mainWindow.getBounds();
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('windowBounds', JSON.stringify(bounds));
+    }
+  };
+
+  mainWindow.on('resize', saveWindowState);
+  mainWindow.on('move', saveWindowState);
+  mainWindow.on('close', saveWindowState);
   // mainWindow.webContents.openDevTools() // Disabled - prevents auto-opening debug console on load
   
   // Allow puter.com API requests (handle CORS if needed)
@@ -7324,12 +7382,28 @@ ipcHandlerRegistry.set('get-shopify-product', getShopifyProductHandler);
 
 /**
  * Get Shopify product by linked model ID.
- * Checks shopify_products.model_id for direct linking.
+ * Checks both shopify_products.model_id (primary file) and shopify_product_files (all files).
  */
 async function getShopifyProductByModelHandler(event, modelId) {
   try {
-    const product = db.prepare(`SELECT * FROM shopify_products WHERE model_id = ?`).get(modelId);
-    return product || null;
+    // First check if this is the primary model
+    let product = db.prepare(`SELECT * FROM shopify_products WHERE model_id = ?`).get(modelId);
+    if (product) return product;
+
+    // Check if this model is linked via shopify_product_files
+    const fileEntry = db.prepare(`
+      SELECT spf.folder_path, spf.link_status
+      FROM shopify_product_files spf
+      WHERE spf.model_id = ? AND spf.link_status = 'linked'
+    `).get(modelId);
+
+    if (fileEntry) {
+      // Find the shopify_products entry for this folder
+      product = db.prepare(`SELECT * FROM shopify_products WHERE folder_path = ?`).get(fileEntry.folder_path);
+      return product || null;
+    }
+
+    return null;
   } catch (error) {
     console.error('Error getting Shopify product by model:', error);
     throw error;
@@ -8248,6 +8322,69 @@ function getFolderName(folderPath) {
 }
 
 /**
+ * Helper: Attempt to match a model filename to a Shopify variant.
+ * Returns { variantId, optionValue } if matched, null otherwise.
+ *
+ * Matching strategy (in priority order):
+ * 1. Exact match: filename (without extension) equals optionValue
+ * 2. Contains match: filename contains optionValue (case-insensitive)
+ * 3. Spaceless match: filename without spaces contains optionValue without spaces
+ * 4. SKU suffix match: filename contains variant number from SKU (e.g., "-04")
+ */
+function matchModelToVariant(fileName, variants) {
+  if (!fileName || !variants || variants.length === 0) return null;
+
+  // Remove extension and normalize
+  const baseName = fileName.replace(/\.(3mf|stl)$/i, '');
+  const baseNameLower = baseName.toLowerCase().replace(/[_-]/g, ' ').trim();
+  const baseNameNoSpaces = baseNameLower.replace(/\s+/g, '');
+
+  // Strategy 1: Exact match (case-insensitive, ignoring separators)
+  for (const variant of variants) {
+    const optionLower = (variant.optionValue || '').toLowerCase().replace(/[_-]/g, ' ').trim();
+    if (baseNameLower === optionLower) {
+      return { variantId: variant.id, optionValue: variant.optionValue };
+    }
+  }
+
+  // Strategy 2: Filename contains optionValue (longest match first to avoid false positives)
+  const sortedByLength = [...variants].sort((a, b) =>
+    (b.optionValue || '').length - (a.optionValue || '').length
+  );
+  for (const variant of sortedByLength) {
+    const optionLower = (variant.optionValue || '').toLowerCase().replace(/[_-]/g, ' ').trim();
+    if (optionLower.length >= 3 && baseNameLower.includes(optionLower)) {
+      return { variantId: variant.id, optionValue: variant.optionValue };
+    }
+  }
+
+  // Strategy 3: Spaceless match (e.g., "ChristmasTreeGhost" contains "christmastree")
+  for (const variant of sortedByLength) {
+    const optionNoSpaces = (variant.optionValue || '').toLowerCase().replace(/[\s_-]/g, '');
+    if (optionNoSpaces.length >= 3 && baseNameNoSpaces.includes(optionNoSpaces)) {
+      return { variantId: variant.id, optionValue: variant.optionValue };
+    }
+  }
+
+  // Strategy 4: SKU suffix match (e.g., "CookieGhost" matches SKU ending in "-04" if variant number is 4)
+  // Extract potential variant number from filename (last digits before extension)
+  const numMatch = baseName.match(/[-_]?(\d{1,3})$/);
+  if (numMatch) {
+    const fileNum = parseInt(numMatch[1], 10);
+    for (const variant of variants) {
+      if (variant.sku) {
+        const skuMatch = variant.sku.match(/-(\d{1,3})$/);
+        if (skuMatch && parseInt(skuMatch[1], 10) === fileNum) {
+          return { variantId: variant.id, optionValue: variant.optionValue };
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * Get folders (products) that need reconciliation.
  * A folder is a "product" if it contains at least one 3MF file.
  * STL files are excluded from being top-level candidates.
@@ -8486,6 +8623,29 @@ async function linkFolderToShopifyHandler(event, folderPath, primaryModelId, sho
       );
     }
 
+    // Get ALL model files in this folder and create shopify_product_files entries
+    // Variant assignment is manual via the editor UI - no auto-matching
+    const folderFiles = db.prepare(`
+      SELECT id, fileName, filePath FROM models
+      WHERE REPLACE(filePath, CHAR(92), '/') LIKE ? || '/%'
+        AND (LOWER(fileName) LIKE '%.3mf' OR LOWER(fileName) LIKE '%.stl')
+    `).all(folderPath);
+
+    const upsertFile = db.prepare(`
+      INSERT INTO shopify_product_files (folder_path, model_id, is_primary, link_status)
+      VALUES (?, ?, ?, 'linked')
+      ON CONFLICT(folder_path, model_id) DO UPDATE SET
+        link_status = CASE WHEN link_status = 'skipped' THEN 'skipped' ELSE 'linked' END,
+        updated_at = datetime('now')
+    `);
+
+    for (const file of folderFiles) {
+      const isPrimary = file.id === primaryModelId ? 1 : 0;
+      upsertFile.run(folderPath, file.id, isPrimary);
+    }
+
+    console.log(`[Shopify] Created ${folderFiles.length} file entries (variant assignment is manual)`);
+
     // Auto-populate parentModel for files in this folder (if not already set)
     autoPopulateParentModel(folderPath);
 
@@ -8574,6 +8734,370 @@ async function getSkippedFilesHandler(event) {
 }
 ipcMain.handle('get-skipped-files', getSkippedFilesHandler);
 ipcHandlerRegistry.set('get-skipped-files', getSkippedFilesHandler);
+
+/**
+ * Get all files in a folder with their variant assignments.
+ * Used by the Shopify editor to show file-to-variant mapping UI.
+ */
+async function getFolderFileVariantsHandler(event, folderPath) {
+  try {
+    // Get the shopify_products entry for this folder
+    const product = db.prepare(`
+      SELECT sp.id, sp.title, sp.shopify_product_id, sp.option_name
+      FROM shopify_products sp
+      WHERE sp.folder_path = ?
+    `).get(folderPath);
+
+    if (!product) {
+      return { files: [], variants: [], product: null };
+    }
+
+    // Get all variants for this product
+    const variants = db.prepare(`
+      SELECT sv.shopify_variant_id as id, sv.option_value as optionValue, sv.sku
+      FROM shopify_variants sv
+      WHERE sv.product_id = ?
+      ORDER BY sv.variant_number
+    `).all(product.id);
+
+    // Get all model files in this folder with their variant assignments
+    const files = db.prepare(`
+      SELECT
+        m.id,
+        m.fileName,
+        m.filePath,
+        spf.is_primary as isPrimary,
+        spf.link_status as linkStatus,
+        spf.shopify_variant_id as variantId,
+        spf.variant_option_value as variantOptionValue
+      FROM models m
+      LEFT JOIN shopify_product_files spf ON spf.model_id = m.id AND spf.folder_path = ?
+      WHERE REPLACE(m.filePath, CHAR(92), '/') LIKE ? || '/%'
+        AND (LOWER(m.fileName) LIKE '%.3mf' OR LOWER(m.fileName) LIKE '%.stl')
+      ORDER BY m.fileName
+    `).all(folderPath, folderPath);
+
+    return {
+      files,
+      variants,
+      product: {
+        id: product.id,
+        title: product.title,
+        shopifyProductId: product.shopify_product_id,
+        optionName: product.option_name
+      }
+    };
+  } catch (error) {
+    console.error('Error getting folder file variants:', error);
+    throw error;
+  }
+}
+ipcMain.handle('get-folder-file-variants', getFolderFileVariantsHandler);
+ipcHandlerRegistry.set('get-folder-file-variants', getFolderFileVariantsHandler);
+
+/**
+ * Manually assign a Shopify variant to a model file.
+ * Used when auto-matching fails or user wants to override.
+ * Clears any existing assignment to this variant from other models first.
+ */
+async function assignFileVariantHandler(event, folderPath, modelId, variantId, optionValue) {
+  try {
+    // Clear any existing assignment to this variant from OTHER models in the same folder
+    // This prevents duplicate assignments when reassigning a variant to a different file
+    const cleared = db.prepare(`
+      UPDATE shopify_product_files
+      SET shopify_variant_id = NULL, variant_option_value = NULL, updated_at = datetime('now')
+      WHERE folder_path = ? AND shopify_variant_id = ? AND model_id != ?
+    `).run(folderPath, variantId, modelId);
+
+    if (cleared.changes > 0) {
+      console.log(`[Shopify] Cleared ${cleared.changes} existing assignment(s) to variant ${optionValue || variantId}`);
+    }
+
+    // Now insert/update the new assignment
+    db.prepare(`
+      INSERT INTO shopify_product_files (folder_path, model_id, is_primary, link_status, shopify_variant_id, variant_option_value)
+      VALUES (?, ?, 0, 'linked', ?, ?)
+      ON CONFLICT(folder_path, model_id) DO UPDATE SET
+        shopify_variant_id = ?,
+        variant_option_value = ?,
+        updated_at = datetime('now')
+    `).run(folderPath, modelId, variantId, optionValue, variantId, optionValue);
+
+    console.log(`[Shopify] Assigned variant ${optionValue || variantId} to model ${modelId}`);
+    return { success: true };
+  } catch (error) {
+    console.error('Error assigning file variant:', error);
+    throw error;
+  }
+}
+ipcMain.handle('assign-file-variant', assignFileVariantHandler);
+ipcHandlerRegistry.set('assign-file-variant', assignFileVariantHandler);
+
+/**
+ * Get product variants with file suggestions (variant-first approach).
+ * For each variant, returns current assignment or suggested file match.
+ * Suggestions require explicit user confirmation - never auto-applied.
+ */
+async function getProductVariantsWithSuggestionsHandler(event, folderPath) {
+  try {
+    // Get the shopify_products entry for this folder
+    const product = db.prepare(`
+      SELECT sp.id, sp.title, sp.shopify_product_id, sp.option_name, sp.model_id as primaryModelId
+      FROM shopify_products sp
+      WHERE sp.folder_path = ?
+    `).get(folderPath);
+
+    if (!product || !product.shopify_product_id) {
+      return { product: null, variants: [], files: [] };
+    }
+
+    // Get all variants for this product
+    const variants = db.prepare(`
+      SELECT sv.id as localId, sv.shopify_variant_id, sv.option_value, sv.sku
+      FROM shopify_variants sv
+      WHERE sv.product_id = ?
+      ORDER BY sv.variant_number
+    `).all(product.id);
+
+    // Get all model files in this folder with their assignments and thumbnails
+    const files = db.prepare(`
+      SELECT
+        m.id,
+        m.fileName,
+        m.filePath,
+        m.thumbnail,
+        COALESCE(spf.is_primary, 0) as isPrimary,
+        spf.shopify_variant_id as assignedVariantId,
+        spf.variant_option_value as assignedOptionValue
+      FROM models m
+      LEFT JOIN shopify_product_files spf ON spf.model_id = m.id AND spf.folder_path = ?
+      WHERE REPLACE(m.filePath, CHAR(92), '/') LIKE ? || '/%'
+        AND (LOWER(m.fileName) LIKE '%.3mf' OR LOWER(m.fileName) LIKE '%.stl')
+      ORDER BY m.fileName
+    `).all(folderPath, folderPath);
+
+    // Build result with assignments and suggestions
+    const variantsWithSuggestions = variants.map(variant => {
+      // Find current assignment
+      const assignedFile = files.find(f => f.assignedVariantId === variant.shopify_variant_id);
+
+      // Compute suggestion if not assigned (using simple word matching)
+      let suggestion = null;
+      if (!assignedFile) {
+        let bestMatch = null;
+        let bestScore = 0;
+
+        for (const file of files) {
+          // Skip already assigned files
+          if (file.assignedVariantId) continue;
+
+          const score = calculateMatchScoreSimple(file.fileName, variant.option_value);
+          if (score > bestScore && score >= 0.3) {
+            bestScore = score;
+            bestMatch = { file, score };
+          }
+        }
+        suggestion = bestMatch;
+      }
+
+      return {
+        ...variant,
+        assignedFile: assignedFile || null,
+        suggestion
+      };
+    });
+
+    return {
+      product: {
+        id: product.id,
+        title: product.title,
+        shopifyProductId: product.shopify_product_id,
+        optionName: product.option_name,
+        primaryModelId: product.primaryModelId
+      },
+      variants: variantsWithSuggestions,
+      files
+    };
+  } catch (error) {
+    console.error('Error getting product variants with suggestions:', error);
+    throw error;
+  }
+}
+
+/** Match score calculation for filename to variant matching */
+function calculateMatchScoreSimple(fileName, optionValue) {
+  if (!fileName || !optionValue) return 0;
+
+  // Remove extension and normalize (keep both spaced and spaceless versions)
+  const baseName = fileName.replace(/\.(3mf|stl)$/i, '').toLowerCase().replace(/[_-]/g, ' ').trim();
+  const baseNameNoSpaces = baseName.replace(/\s+/g, '');
+  const option = optionValue.toLowerCase().replace(/[_-]/g, ' ').trim();
+  const optionNoSpaces = option.replace(/\s+/g, '');
+
+  // Strategy 1: Exact match (case-insensitive)
+  if (baseName === option || baseNameNoSpaces === optionNoSpaces) return 1;
+
+  // Strategy 2: Contains match (spaced)
+  if (baseName.includes(option) || option.includes(baseName)) return 0.9;
+
+  // Strategy 3: Contains match (spaceless) - handles "BlackCatGhost" containing "blackcat"
+  if (optionNoSpaces.length >= 3 && baseNameNoSpaces.includes(optionNoSpaces)) return 0.85;
+  if (baseNameNoSpaces.length >= 3 && optionNoSpaces.includes(baseNameNoSpaces)) return 0.85;
+
+  // Strategy 4: Word-based similarity (check if option words appear in filename)
+  const optionWords = option.split(/\s+/).filter(w => w.length >= 3);
+  if (optionWords.length > 0) {
+    // Count how many option words appear in the spaceless filename
+    const matchingWords = optionWords.filter(w => baseNameNoSpaces.includes(w));
+    if (matchingWords.length >= 2) {
+      // Good match if 2+ words match
+      return 0.7 + (0.1 * Math.min(matchingWords.length - 2, 2)); // 0.7 to 0.9
+    }
+    if (matchingWords.length === 1) {
+      return 0.4; // Weak match with single word
+    }
+  }
+
+  // Strategy 5: SKU suffix match (e.g., "ghost-04" matches variant with SKU ending "-04")
+  const numMatch = baseName.match(/[-_\s]?(\d{1,3})$/);
+  if (numMatch) {
+    const fileNum = parseInt(numMatch[1], 10);
+    // This would need SKU passed in, so just return low score
+    // SKU matching is handled separately if needed
+  }
+
+  return 0;
+}
+
+ipcMain.handle('get-product-variants-with-suggestions', getProductVariantsWithSuggestionsHandler);
+ipcHandlerRegistry.set('get-product-variants-with-suggestions', getProductVariantsWithSuggestionsHandler);
+
+/**
+ * Set the primary/default file for a Shopify product.
+ * Clears is_primary on all other files for this product.
+ */
+async function setPrimaryFileHandler(event, folderPath, modelId) {
+  try {
+    // Clear existing primary
+    db.prepare('UPDATE shopify_product_files SET is_primary = 0 WHERE folder_path = ?').run(folderPath);
+
+    // Set new primary
+    db.prepare(`
+      INSERT INTO shopify_product_files (folder_path, model_id, is_primary, link_status)
+      VALUES (?, ?, 1, 'linked')
+      ON CONFLICT(folder_path, model_id) DO UPDATE SET is_primary = 1, updated_at = datetime('now')
+    `).run(folderPath, modelId);
+
+    // Also update shopify_products.model_id
+    db.prepare('UPDATE shopify_products SET model_id = ? WHERE folder_path = ?').run(modelId, folderPath);
+
+    console.log(`[Shopify] Set primary file to model ${modelId} for ${folderPath}`);
+    return { success: true };
+  } catch (error) {
+    console.error('Error setting primary file:', error);
+    throw error;
+  }
+}
+ipcMain.handle('set-primary-file', setPrimaryFileHandler);
+ipcHandlerRegistry.set('set-primary-file', setPrimaryFileHandler);
+
+/**
+ * Backfill variant mappings for already-linked Shopify products.
+ * Fetches variants from Shopify API and attempts to match local files to variants.
+ * Returns { processed, matched, errors }.
+ */
+async function backfillVariantMappingsHandler(event) {
+  const settings = readShopifySettings();
+  if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
+    throw new Error('Shopify credentials not configured');
+  }
+
+  // Get all linked products (those with shopify_product_id set)
+  const linkedProducts = db.prepare(`
+    SELECT id, folder_path, shopify_product_id, title
+    FROM shopify_products
+    WHERE shopify_product_id IS NOT NULL AND push_status = 'linked'
+  `).all();
+
+  console.log(`[Shopify] Backfilling variant mappings for ${linkedProducts.length} linked products...`);
+
+  let processed = 0;
+  let filesRegistered = 0;
+  const errors = [];
+
+  for (const product of linkedProducts) {
+    try {
+      // Fetch variants from Shopify API
+      const shopifyProduct = await shopifyApi.fetchProductWithVariants(
+        settings.storeDomain,
+        settings.clientId,
+        settings.clientSecret,
+        product.shopify_product_id
+      );
+
+      if (!shopifyProduct || !shopifyProduct.variants) {
+        errors.push({ folder: product.folder_path, error: 'No variants found' });
+        continue;
+      }
+
+      // Clear and re-import variants
+      db.prepare('DELETE FROM shopify_variants WHERE product_id = ?').run(product.id);
+
+      const insertVariant = db.prepare(`
+        INSERT INTO shopify_variants (product_id, variant_number, option_value, sku, price, compare_at_price, inventory_quantity, shopify_variant_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      let variantNum = 1;
+      for (const variant of shopifyProduct.variants) {
+        insertVariant.run(
+          product.id,
+          variantNum++,
+          variant.optionValue || variant.title || `Variant ${variantNum}`,
+          variant.sku || null,
+          variant.price ? parseFloat(variant.price) : null,
+          variant.compareAtPrice ? parseFloat(variant.compareAtPrice) : null,
+          variant.inventoryQuantity ?? null,
+          variant.id
+        );
+      }
+
+      // Get all model files in this folder
+      const folderFiles = db.prepare(`
+        SELECT id, fileName, filePath FROM models
+        WHERE REPLACE(filePath, CHAR(92), '/') LIKE ? || '/%'
+          AND (LOWER(fileName) LIKE '%.3mf' OR LOWER(fileName) LIKE '%.stl')
+      `).all(product.folder_path);
+
+      // Ensure all files are registered in shopify_product_files (no auto-matching)
+      // Variant assignment is manual-only to avoid false positives
+      const upsertFile = db.prepare(`
+        INSERT INTO shopify_product_files (folder_path, model_id, is_primary, link_status)
+        VALUES (?, ?, 0, 'linked')
+        ON CONFLICT(folder_path, model_id) DO UPDATE SET
+          link_status = CASE WHEN link_status = 'skipped' THEN 'skipped' ELSE 'linked' END,
+          updated_at = datetime('now')
+      `);
+
+      for (const file of folderFiles) {
+        upsertFile.run(product.folder_path, file.id);
+        filesRegistered++;
+      }
+
+      console.log(`[Shopify] Backfilled ${product.folder_path}: ${folderFiles.length} files registered, variants cached (manual assignment required)`);
+      processed++;
+    } catch (error) {
+      console.error(`[Shopify] Error backfilling ${product.folder_path}:`, error.message);
+      errors.push({ folder: product.folder_path, error: error.message });
+    }
+  }
+
+  console.log(`[Shopify] Backfill complete: ${processed} products processed, ${filesRegistered} files registered (manual variant assignment required), ${errors.length} errors`);
+  return { processed, filesRegistered, errors };
+}
+ipcMain.handle('backfill-variant-mappings', backfillVariantMappingsHandler);
+ipcHandlerRegistry.set('backfill-variant-mappings', backfillVariantMappingsHandler);
 
 /**
  * Mark a folder as "no match - will create new Shopify product".
@@ -16605,6 +17129,38 @@ function ensureShopifyTablesExist() {
     db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_product_files_folder ON shopify_product_files(folder_path)').run();
     db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_product_files_model ON shopify_product_files(model_id)').run();
     db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_product_files_status ON shopify_product_files(link_status)').run();
+
+    // Migration: Add variant mapping columns to shopify_product_files
+    const productFilesCols = db.prepare("PRAGMA table_info(shopify_product_files)").all();
+    const productFilesColNames = productFilesCols.map(c => c.name);
+
+    if (!productFilesColNames.includes('shopify_variant_id')) {
+      console.log('[Shopify] Migrating: adding shopify_variant_id column to shopify_product_files...');
+      db.prepare('ALTER TABLE shopify_product_files ADD COLUMN shopify_variant_id TEXT').run();
+      console.log('[Shopify] Added shopify_variant_id column');
+    }
+
+    if (!productFilesColNames.includes('variant_option_value')) {
+      console.log('[Shopify] Migrating: adding variant_option_value column to shopify_product_files...');
+      db.prepare('ALTER TABLE shopify_product_files ADD COLUMN variant_option_value TEXT').run();
+      console.log('[Shopify] Added variant_option_value column');
+    }
+
+    // Index for variant lookups
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_product_files_variant ON shopify_product_files(shopify_variant_id)').run();
+
+    // One-time migration: Clear auto-matched variant mappings (filename matching was unreliable)
+    // Uses a settings flag to ensure this only runs once
+    const variantCleanupDone = db.prepare("SELECT value FROM settings WHERE key = 'variant_mapping_cleanup_v1'").get();
+    if (!variantCleanupDone) {
+      const countBefore = db.prepare("SELECT COUNT(*) as cnt FROM shopify_product_files WHERE shopify_variant_id IS NOT NULL").get();
+      if (countBefore.cnt > 0) {
+        console.log(`[Shopify] Clearing ${countBefore.cnt} auto-matched variant mappings (filename matching was unreliable)...`);
+        db.prepare("UPDATE shopify_product_files SET shopify_variant_id = NULL, variant_option_value = NULL WHERE shopify_variant_id IS NOT NULL").run();
+        console.log('[Shopify] Variant mappings cleared - use manual assignment in editor');
+      }
+      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('variant_mapping_cleanup_v1', '1')").run();
+    }
 
     // Seed default product types if table is empty
     const typeCount = db.prepare('SELECT COUNT(*) as count FROM shopify_product_types').get();

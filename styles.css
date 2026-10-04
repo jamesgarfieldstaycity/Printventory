@@ -1567,6 +1567,10 @@ main {
   color: #fff;
 }
 
+.file-item-list .shopify-status.shopify-unassigned {
+  background: rgba(245, 158, 11, 0.85);
+}
+
 .file-item-list .file-info {
   flex: 1;
   min-width: 0;
@@ -3360,6 +3364,11 @@ header {
 /* Closed dialogs must never eat clicks if CSS keeps them in the layout. */
 dialog:not([open]) {
   pointer-events: none !important;
+}
+
+/* Open dialogs must receive clicks even if an ancestor (e.g. closed sidebar) has pointer-events: none. */
+dialog[open] {
+  pointer-events: auto;
 }
 
 .modal {
@@ -8436,6 +8445,11 @@ dialog:not([open]) {
   top: 8px;
 }
 
+/* Shopify badge variant - unassigned (amber warning) */
+.file-grid .shopify-status.shopify-unassigned {
+  background: rgba(245, 158, 11, 0.85); /* Amber warning */
+}
+
 /* New badge inside .thumbnail-container: mid-right so it never sits under the card-level Printed pill (TL).
    Avoids Archive (card TR, one line), GROUPED (::after BL in detailed/preview; TR in list), 1/N badge (BR). */
 .file-grid .thumbnail-container > .new-status {
@@ -10696,6 +10710,52 @@ body.is-panel-resizing * {
   border-color: #00d4ff;
 }
 
+/* Split Button for Open Model */
+.split-button-container {
+  display: flex;
+  align-items: stretch;
+}
+
+/* Split button - both main and dropdown get blue styling */
+.split-button-main,
+.split-button-dropdown,
+#shopify-open-slicer,
+#shopify-open-model-dropdown {
+  background: #3b82f6 !important;
+  color: #ffffff !important;
+  border-color: #3b82f6 !important;
+  text-shadow: none !important;
+  -webkit-text-fill-color: #ffffff !important;
+  opacity: 1 !important;
+  /* Override global button styles */
+  width: auto !important;
+  padding: 6px 12px !important;
+  margin-bottom: 0 !important;
+  border-radius: 5px !important;
+  box-shadow: none !important;
+}
+
+#shopify-open-slicer {
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  border-right: none !important;
+}
+
+#shopify-open-model-dropdown {
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  padding: 6px 8px !important;
+  font-size: 10px !important;
+}
+
+.split-button-main:hover,
+.split-button-dropdown:hover,
+#shopify-open-slicer:hover,
+#shopify-open-model-dropdown:hover {
+  background: #2563eb !important;
+  border-color: #2563eb !important;
+}
+
 .shopify-cancel-btn {
   background: rgba(255, 255, 255, 0.02);
 }
@@ -11097,6 +11157,427 @@ body.is-panel-resizing * {
 .shopify-seo-content {
   padding: 0 12px 12px 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Variant Assignments Section */
+.shopify-variant-section {
+  margin: 16px 0;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.shopify-variant-section summary {
+  padding: 12px 16px;
+  cursor: pointer;
+  font-weight: 600;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shopify-variant-section summary::-webkit-details-marker {
+  display: none;
+}
+
+.shopify-variant-section summary::before {
+  content: '▶';
+  font-size: 10px;
+  display: inline-block;
+  transition: transform 0.2s ease;
+}
+
+.shopify-variant-section[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.shopify-variant-content {
+  padding: 0 16px 16px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.shopify-variant-help {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  margin: 8px 0 12px 0;
+}
+
+.shopify-variant-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.shopify-variant-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+}
+
+.shopify-variant-item.matched {
+  border-left: 3px solid #96bf48;
+}
+
+.shopify-variant-item.unmatched {
+  border-left: 3px solid #f59e0b;
+}
+
+.shopify-variant-filename {
+  flex: 1;
+  font-size: 13px;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shopify-variant-select {
+  min-width: 180px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: #fff;
+  font-size: 12px;
+}
+
+.shopify-variant-select option {
+  background: #1a1a2e;
+  color: #fff;
+}
+
+.shopify-variant-status {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.shopify-variant-status.auto {
+  background: rgba(150, 191, 72, 0.3);
+  color: #96bf48;
+}
+
+.shopify-variant-status.manual {
+  background: rgba(59, 130, 246, 0.3);
+  color: #3b82f6;
+}
+
+.shopify-variant-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+/* Primary File Control */
+.shopify-primary-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+}
+
+.shopify-primary-control.hidden {
+  display: none;
+}
+
+.shopify-primary-control label {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.8);
+  white-space: nowrap;
+}
+
+.shopify-primary-control select {
+  flex: 1;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: #fff;
+  font-size: 12px;
+}
+
+/* Variant Assignment Rows (variant-first approach) - compact inline layout */
+.shopify-variant-list .shopify-variant-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  border-left: 3px solid transparent;
+}
+
+.shopify-variant-list .shopify-variant-row.assigned {
+  border-left-color: #96bf48;
+}
+
+.shopify-variant-list .shopify-variant-row.suggested {
+  border-left-color: #3b82f6;
+}
+
+.shopify-variant-list .shopify-variant-row.unassigned {
+  border-left-color: #f59e0b;
+}
+
+/* Thumbnail in variant row */
+.variant-row-thumbnail {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 3px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.variant-row-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.variant-info {
+  min-width: 100px;
+  max-width: 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex-shrink: 0;
+}
+
+.variant-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.variant-sku {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.variant-file-assignment {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.variant-file-assignment .variant-buttons {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.assigned-file {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: #96bf48;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.suggested-file {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.suggestion-filename {
+  font-size: 11px;
+  color: #3b82f6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.match-score {
+  font-size: 10px;
+  padding: 1px 4px;
+  background: rgba(59, 130, 246, 0.2);
+  color: #3b82f6;
+  border-radius: 3px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.no-assignment {
+  flex: 1;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+  font-style: italic;
+}
+
+.variant-action-btn {
+  padding: 3px 8px;
+  font-size: 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  border: none;
+  white-space: nowrap;
+}
+
+.variant-action-btn.confirm-btn {
+  background: #96bf48;
+  color: #fff;
+}
+
+.variant-action-btn.confirm-btn:hover {
+  background: #7ca83a;
+}
+
+.variant-action-btn.select-file-btn,
+.variant-action-btn.replace-file-btn {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.variant-action-btn.select-file-btn:hover,
+.variant-action-btn.replace-file-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.variant-action-btn.open-file-btn {
+  background: rgba(59, 130, 246, 0.2);
+  color: #3b82f6;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.variant-action-btn.open-file-btn:hover {
+  background: rgba(59, 130, 246, 0.3);
+}
+
+/* File Picker Modal */
+.variant-file-picker-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.variant-file-picker-modal {
+  background: #1a1a2e;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.variant-file-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.variant-file-picker-header h3 {
+  margin: 0;
+  font-size: 15px;
+  color: #fff;
+}
+
+.close-picker-btn {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.close-picker-btn:hover {
+  color: #fff;
+}
+
+.variant-file-picker-list {
+  padding: 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.variant-file-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+}
+
+.variant-file-option:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.file-option-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-option-assigned {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+  white-space: nowrap;
+}
+
+.select-this-file-btn {
+  padding: 5px 12px;
+  background: #96bf48;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+  flex-grow: 0;
+  width: auto;
+  min-width: unset;
+  max-width: unset;
+}
+
+.select-this-file-btn:hover {
+  background: #7ca83a;
 }
 
 /* Variants Table - Editable */

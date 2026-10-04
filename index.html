@@ -1186,7 +1186,10 @@
             </div>
           </div>
           <div class="shopify-editor-actions">
-            <button type="button" id="shopify-open-slicer" class="shopify-action-btn" onclick="if(typeof window.openModelInSlicer==='function')window.openModelInSlicer()">Open Model</button>
+            <div class="split-button-container" id="shopify-open-model-container">
+              <button type="button" id="shopify-open-slicer" class="shopify-action-btn split-button-main" onclick="if(typeof window.openModelInSlicer==='function')window.openModelInSlicer()">Open Model</button>
+              <button type="button" id="shopify-open-model-dropdown" class="shopify-action-btn split-button-dropdown" style="display: none;" title="Select variant file">▼</button>
+            </div>
             <button type="button" id="shopify-refresh-live" class="shopify-action-btn shopify-refresh-btn" style="display: none;" onclick="if(typeof window.refreshLiveShopifyData==='function')window.refreshLiveShopifyData()">🔄 Refresh from Shopify</button>
             <button type="button" id="shopify-push-update" class="shopify-push-btn" style="display: none;" onclick="if(typeof window.pushLinkedShopifyUpdate==='function')window.pushLinkedShopifyUpdate()">Push to Shopify</button>
             <button type="button" id="shopify-push-draft" class="shopify-push-btn" onclick="if(typeof window.pushShopifyProductAsDraft==='function')window.pushShopifyProductAsDraft()">Push as Draft</button>
@@ -1252,6 +1255,23 @@
               <label for="shopify-live-tags">Tags <span class="field-hint">(comma-separated)</span></label>
               <input type="text" id="shopify-live-tags" placeholder="e.g., Disney, Figure, Collectible">
             </div>
+
+            <!-- Variant Assignments Section (only shown for multi-file products) -->
+            <details id="shopify-variant-assignments-section" class="shopify-variant-section">
+              <summary>Variant Assignments <span id="variant-assignment-count" class="field-hint"></span></summary>
+              <div class="shopify-variant-content">
+                <div class="shopify-primary-control hidden">
+                  <label for="shopify-primary-file-select">Default file for listing:</label>
+                  <select id="shopify-primary-file-select">
+                    <!-- Populated by JS -->
+                  </select>
+                </div>
+                <p class="shopify-variant-help">Assign model files to Shopify variants. Confirm suggestions or select files manually.</p>
+                <div id="shopify-variant-list" class="shopify-variant-list">
+                  <!-- Populated by JS -->
+                </div>
+              </div>
+            </details>
 
             <!-- SEO Section -->
             <details class="shopify-seo-section" open>
