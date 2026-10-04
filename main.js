@@ -2778,15 +2778,13 @@ const MODEL_LIST_THUMB_FLAGS_QUALIFIED =
   "CASE WHEN models.thumbnail IS NOT NULL AND models.thumbnail != '' AND models.thumbnail != '3d.png' THEN 1 ELSE 0 END AS hasThumbnail, " +
   "CASE WHEN models.thumbnail IS NOT NULL AND INSTR(models.thumbnail, '::') > 0 THEN 1 ELSE 0 END AS hasMultipleThumbnails";
 
-/** Shopify linked flag - checks direct model_id, legacy junction table, and folder-based linking */
+/** Shopify linked flag - checks direct model_id and folder-based linking */
 const SHOPIFY_LINKED_FLAG =
   "CASE WHEN EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.model_id = id) " +
-  "OR EXISTS (SELECT 1 FROM shopify_product_models spm WHERE spm.model_id = id) " +
   "OR EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.folder_path IS NOT NULL AND sp.folder_path != '' AND REPLACE(filePath, CHAR(92), '/') LIKE sp.folder_path || '/%') " +
   "THEN 1 ELSE 0 END AS shopifyLinked";
 const SHOPIFY_LINKED_FLAG_QUALIFIED =
   "CASE WHEN EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.model_id = models.id) " +
-  "OR EXISTS (SELECT 1 FROM shopify_product_models spm WHERE spm.model_id = models.id) " +
   "OR EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.folder_path IS NOT NULL AND sp.folder_path != '' AND REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%') " +
   "THEN 1 ELSE 0 END AS shopifyLinked";
 
@@ -4004,7 +4002,11 @@ async function createWindow() {
         { role: 'zoomIn' },
         { role: 'zoomOut' },
         { type: 'separator' },
-        { role: 'togglefullscreen' }
+        { role: 'togglefullscreen' },
+        { type: 'separator' },
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' }
       ]
     },
     {
@@ -4365,7 +4367,11 @@ function createApplicationMenu() {
         { role: 'zoomIn' },
         { role: 'zoomOut' },
         { type: 'separator' },
-        { role: 'togglefullscreen' }
+        { role: 'togglefullscreen' },
+        { type: 'separator' },
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' }
       ]
     },
     {
@@ -6233,14 +6239,12 @@ function buildModelFilterConditions(filters) {
     }
 
     // Shopify filter - linked or not-linked
-    // Check three linking methods:
+    // Check two linking methods:
     // 1. Direct model_id link in shopify_products
-    // 2. Legacy shopify_product_models junction table
-    // 3. Folder-based linking where model's filePath starts with shopify_products.folder_path/
+    // 2. Folder-based linking where model's filePath starts with shopify_products.folder_path/
     if (filters.shopifyFilter === 'linked') {
       conditions.push(`(
         EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.model_id = models.id)
-        OR EXISTS (SELECT 1 FROM shopify_product_models spm WHERE spm.model_id = models.id)
         OR EXISTS (
           SELECT 1 FROM shopify_products sp
           WHERE sp.folder_path IS NOT NULL
@@ -6251,7 +6255,6 @@ function buildModelFilterConditions(filters) {
     } else if (filters.shopifyFilter === 'not-linked') {
       conditions.push(`(
         NOT EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.model_id = models.id)
-        AND NOT EXISTS (SELECT 1 FROM shopify_product_models spm WHERE spm.model_id = models.id)
         AND NOT EXISTS (
           SELECT 1 FROM shopify_products sp
           WHERE sp.folder_path IS NOT NULL
@@ -7270,12 +7273,7 @@ ipcHandlerRegistry.set('delete-shopify-collection-code', deleteShopifyCollection
  */
 async function getShopifyProductsHandler(event, filters = {}) {
   try {
-    let query = `
-      SELECT sp.*,
-             GROUP_CONCAT(DISTINCT spm.model_id) as model_ids
-      FROM shopify_products sp
-      LEFT JOIN shopify_product_models spm ON sp.id = spm.shopify_product_id
-    `;
+    let query = `SELECT sp.* FROM shopify_products sp`;
     const params = [];
     const conditions = [];
 
@@ -7288,12 +7286,12 @@ async function getShopifyProductsHandler(event, filters = {}) {
       query += ' WHERE ' + conditions.join(' AND ');
     }
 
-    query += ' GROUP BY sp.id ORDER BY sp.created_at DESC';
+    query += ' ORDER BY sp.created_at DESC';
 
     const products = db.prepare(query).all(...params);
     return products.map(p => ({
       ...p,
-      model_ids: p.model_ids ? p.model_ids.split(',').map(Number) : []
+      model_ids: p.model_id ? [p.model_id] : []
     }));
   } catch (error) {
     console.error('Error getting Shopify products:', error);
@@ -7308,20 +7306,13 @@ ipcHandlerRegistry.set('get-shopify-products', getShopifyProductsHandler);
  */
 async function getShopifyProductHandler(event, productId) {
   try {
-    const product = db.prepare(`
-      SELECT sp.*,
-             GROUP_CONCAT(DISTINCT spm.model_id) as model_ids
-      FROM shopify_products sp
-      LEFT JOIN shopify_product_models spm ON sp.id = spm.shopify_product_id
-      WHERE sp.id = ?
-      GROUP BY sp.id
-    `).get(productId);
+    const product = db.prepare(`SELECT * FROM shopify_products WHERE id = ?`).get(productId);
 
     if (!product) return null;
 
     return {
       ...product,
-      model_ids: product.model_ids ? product.model_ids.split(',').map(Number) : []
+      model_ids: product.model_id ? [product.model_id] : []
     };
   } catch (error) {
     console.error('Error getting Shopify product:', error);
@@ -7333,22 +7324,12 @@ ipcHandlerRegistry.set('get-shopify-product', getShopifyProductHandler);
 
 /**
  * Get Shopify product by linked model ID.
- * Checks both the legacy shopify_product_models table and the new folder-based shopify_products.model_id.
+ * Checks shopify_products.model_id for direct linking.
  */
 async function getShopifyProductByModelHandler(event, modelId) {
   try {
-    // First check folder-based linking (shopify_products.model_id)
-    const folderBased = db.prepare(`
-      SELECT * FROM shopify_products WHERE model_id = ?
-    `).get(modelId);
-    if (folderBased) {
-      return folderBased;
-    }
-
-    // Fall back to legacy shopify_product_models table
-    const link = db.prepare('SELECT shopify_product_id FROM shopify_product_models WHERE model_id = ?').get(modelId);
-    if (!link) return null;
-    return await getShopifyProductHandler(event, link.shopify_product_id);
+    const product = db.prepare(`SELECT * FROM shopify_products WHERE model_id = ?`).get(modelId);
+    return product || null;
   } catch (error) {
     console.error('Error getting Shopify product by model:', error);
     throw error;
@@ -7690,10 +7671,9 @@ async function saveShopifyProductHandler(event, productData) {
 
       const newId = result.lastInsertRowid;
 
-      // Link to model if provided
+      // Link to model if provided (update model_id on the product)
       if (model_id) {
-        db.prepare('INSERT OR REPLACE INTO shopify_product_models (shopify_product_id, model_id, variant_number) VALUES (?, ?, ?)')
-          .run(newId, model_id, variant_number || 1);
+        db.prepare('UPDATE shopify_products SET model_id = ? WHERE id = ?').run(model_id, newId);
       }
 
       return { id: newId, sku };
@@ -7711,7 +7691,6 @@ ipcHandlerRegistry.set('save-shopify-product', saveShopifyProductHandler);
  */
 async function deleteShopifyProductHandler(event, productId) {
   try {
-    db.prepare('DELETE FROM shopify_product_models WHERE shopify_product_id = ?').run(productId);
     db.prepare('DELETE FROM shopify_products WHERE id = ?').run(productId);
     return { success: true };
   } catch (error) {
@@ -7730,10 +7709,7 @@ async function unlinkShopifyProductHandler(event, modelId) {
   try {
     if (!modelId) throw new Error('modelId is required');
 
-    // Remove from legacy junction table
-    db.prepare('DELETE FROM shopify_product_models WHERE model_id = ?').run(modelId);
-
-    // Clear model_id from shopify_products (folder-based link)
+    // Clear model_id from shopify_products
     db.prepare('UPDATE shopify_products SET model_id = NULL WHERE model_id = ?').run(modelId);
 
     console.log(`[Shopify] Unlinked model ${modelId} from Shopify product`);

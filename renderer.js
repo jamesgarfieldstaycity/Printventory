@@ -5638,14 +5638,16 @@ function pruneZipArchiveExpandedGroups(models) {
   }
 }
 
-/** True when the model should show the "New" badge (SQLite 1, boolean, or string "1"). */
+/** True when the model was added within the last 3 days (rolling window). */
 function isModelNew(model) {
-  if (!model) return false;
-  const v = model.isNew;
-  return v === 1 || v === true || v === '1';
+  if (!model || !model.dateAdded) return false;
+  const added = new Date(model.dateAdded);
+  if (isNaN(added.getTime())) return false;
+  const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
+  return added.getTime() >= threeDaysAgo;
 }
 
-/** Keep the thumbnail "New" pill in sync with model.isNew (create, update, virtual-grid reuse). */
+/** Keep the thumbnail "New" pill in sync with model.dateAdded (create, update, virtual-grid reuse). */
 function syncModelNewBadge(fileItem, model) {
   if (!fileItem) return;
   fileItem.querySelector(':scope > .new-status')?.remove();
@@ -5659,7 +5661,7 @@ function syncModelNewBadge(fileItem, model) {
       const newStatusEl = document.createElement('div');
       newStatusEl.className = 'new-status';
       newStatusEl.textContent = 'New';
-      newStatusEl.title = 'New model — clears once you edit it';
+      newStatusEl.title = 'Added within the last 3 days';
       thumbHost.appendChild(newStatusEl);
     }
   } else if (existingBadge) {
@@ -5986,21 +5988,6 @@ async function updateModelElement(filePath) {
     const previewTileNameEl = existingElement.querySelector('.preview-tile-name');
     if (previewTileNameEl) {
       previewTileNameEl.textContent = displayFileName;
-    }
-
-    // Update print status
-    const printStatusElement = existingElement.querySelector('.print-status');
-    if (printStatusElement && window.PrintHistory) {
-      window.PrintHistory.applyBadge(printStatusElement, model);
-      window.PrintHistory.bindBadge(printStatusElement, filePath);
-    } else if (printStatusElement) {
-      printStatusElement.textContent = model.printed ? 'Printed' : 'Not Printed';
-      printStatusElement.classList.toggle('printed', !!model.printed);
-    } else if (window.PrintHistory) {
-      const statusElement = document.createElement('div');
-      window.PrintHistory.applyBadge(statusElement, model);
-      window.PrintHistory.bindBadge(statusElement, filePath);
-      existingElement.appendChild(statusElement);
     }
 
     const engagementBar = existingElement.querySelector('.model-engagement-bar:not(.is-group)');
@@ -17690,19 +17677,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         thumbnailContainer.className = 'thumbnail-container';
         thumbnailContainer.style.background = getComputedStyle(document.documentElement).getPropertyValue('--model-background-color');
         addThumbnailMenuButton(thumbnailContainer, model.filePath);
-        
-        // Create print status indicator
-        const printStatus = document.createElement('div');
-        if (window.PrintHistory) {
-          window.PrintHistory.applyBadge(printStatus, model);
-          window.PrintHistory.bindBadge(printStatus, model.filePath);
-        } else {
-          printStatus.className = 'print-status';
-          printStatus.textContent = 'Not Printed';
-        }
-        
-        thumbnailContainer.appendChild(printStatus);
-        
+
         fileElement.appendChild(thumbnailContainer);
         
         // Create file info container
@@ -17789,16 +17764,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!fileElement) {
               console.warn(`Element for model ${modelRef.filePath} not found in DOM`);
               continue; // Skip if element not found
-            }
-            
-            // Update print status
-            const printStatus = fileElement.querySelector('.print-status');
-            if (printStatus && window.PrintHistory) {
-              window.PrintHistory.applyBadge(printStatus, model);
-              window.PrintHistory.bindBadge(printStatus, model.filePath);
-            } else if (printStatus) {
-              printStatus.textContent = model.printed ? 'Printed' : 'Not Printed';
-              printStatus.classList.toggle('printed', !!model.printed);
             }
             
             // Update file details
@@ -19009,16 +18974,6 @@ async function renderFile(file, container, skipThumbnail = false) {
   if (isInSelectedModels(file.filePath)) {
     fileElement.classList.add('selected');
   }
-
-  const printStatus = document.createElement('div');
-  if (window.PrintHistory) {
-    window.PrintHistory.applyBadge(printStatus, file);
-    window.PrintHistory.bindBadge(printStatus, file.filePath);
-  } else {
-    printStatus.className = `print-status ${file.printed? 'printed': ''}`;
-    printStatus.textContent = file.printed? 'Printed': 'Not Printed';
-  }
-  fileElement.appendChild(printStatus);
 
   const thumbnailContainer = document.createElement('div');
   thumbnailContainer.className = 'thumbnail-container loading';
@@ -24897,17 +24852,6 @@ function createModelItem(model, viewMode = null, thumbPriority = THUMB_PRIORITY_
     item.classList.add('selected');
   }
 
-  // Print status element
-  const printStatus = document.createElement('div');
-  if (window.PrintHistory) {
-    window.PrintHistory.applyBadge(printStatus, model);
-    window.PrintHistory.bindBadge(printStatus, model.filePath);
-  } else {
-    printStatus.className = 'print-status' + (model.printed ? ' printed' : '');
-    printStatus.textContent = model.printed ? 'Printed' : 'Not Printed';
-  }
-  item.appendChild(printStatus);
-
   // Archive status element (for models inside ZIP archives)
   const isZipEntry = model.filePath && model.filePath.includes('::');
   let archiveStatus = null;
@@ -25520,9 +25464,7 @@ function createModelItem(model, viewMode = null, thumbPriority = THUMB_PRIORITY_
   
   // In list view, show Windows File Explorer style - thin horizontal row with details
   if (view === 'list') {
-    // Get status indicators that were already added to item - we'll move them to columns later
-    // Note: These are added to item early in the function (lines 7099-7111), so they should be findable here
-    const printStatusElement = item.querySelector('.print-status');
+    // Get archive status indicator that was already added to item - we'll move it to column later
     const archiveStatusElement = item.querySelector('.archive-status');
     
     // List view: horizontal layout with tiny thumbnail on left, details on right
@@ -25777,32 +25719,6 @@ function createModelItem(model, viewMode = null, thumbPriority = THUMB_PRIORITY_
     parentModelColumn.appendChild(parentModelText);
     fileInfo.appendChild(parentModelColumn);
     
-    // Print Status column (status badge only, no icon)
-    const printStatusColumn = document.createElement('div');
-    printStatusColumn.className = 'print-status-column';
-    printStatusColumn.setAttribute('data-list-col', 'printed');
-    printStatusColumn.style.display = 'flex';
-    printStatusColumn.style.alignItems = 'center';
-    printStatusColumn.style.justifyContent = 'center';
-    printStatusColumn.style.flexShrink = '0';
-    
-    if (printStatusElement) {
-      // Remove all positioning styles and move to column
-      printStatusElement.style.position = 'static';
-      printStatusElement.style.top = 'auto';
-      printStatusElement.style.right = 'auto';
-      printStatusElement.style.left = 'auto';
-      printStatusElement.style.fontSize = '11px';
-      printStatusElement.style.padding = '2px 6px';
-      printStatusElement.style.borderRadius = '3px';
-      printStatusElement.style.display = 'inline-block';
-      printStatusElement.style.zIndex = 'auto';
-      printStatusElement.style.margin = '0';
-      // Move the print status from item to the column (appendChild automatically removes from old parent)
-      printStatusColumn.appendChild(printStatusElement);
-    }
-    fileInfo.appendChild(printStatusColumn);
-    
     // Tags column
     const tagsColumn = document.createElement('div');
     tagsColumn.className = 'tags-info-column';
@@ -25988,7 +25904,6 @@ function createModelItem(model, viewMode = null, thumbPriority = THUMB_PRIORITY_
     item.appendChild(checkEl);
     item.appendChild(overlay);
 
-    item.appendChild(printStatus);
     if (archiveStatus) {
       item.appendChild(archiveStatus);
     }
@@ -27617,13 +27532,6 @@ function createParentModelGroupItem(groupRecord, viewMode = null) {
     );
     if (groupCols.parentModel) parentCol.title = groupCols.parentModel;
     fileInfo.appendChild(parentCol);
-
-    const printedCol = createListViewColumnCell('printed', 'print-status-column', null);
-    const printedBadge = document.createElement('span');
-    printedBadge.className = printedCount > 0 ? 'print-status printed' : 'print-status';
-    printedBadge.textContent = printLabel;
-    printedCol.appendChild(printedBadge);
-    fileInfo.appendChild(printedCol);
 
     const tagsCol = createListViewColumnCell('tags', 'tags-info-column', null);
     const tagsRow = document.createElement('div');
