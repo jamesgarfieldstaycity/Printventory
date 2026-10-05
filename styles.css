@@ -13411,7 +13411,17 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
   cursor: default;
 }
 
-.order-line-link-select {
+/* Manual-link combobox (replaces a native <datalist> input, GR-PLAN-006):
+   James reported the browser's own suggestion popup didn't scroll
+   reliably with thousands of models, and only matched by prefix. This is
+   a custom text input + our own scrollable results panel, filtered with
+   Fuse.js (already vendored, fuzzy/substring matching as you type). */
+.order-line-combobox {
+  position: relative;
+  width: 100%;
+}
+
+.order-line-link-input {
   width: 100%;
   font-size: 11px;
   background: rgba(30, 30, 46, 0.9);
@@ -13419,6 +13429,44 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
   border: 1px solid rgba(255, 180, 70, 0.4);
   border-radius: 6px;
   padding: 5px 6px;
+}
+
+.order-line-link-input:disabled {
+  opacity: 0.6;
+}
+
+.order-line-combobox-results {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  max-height: 200px;
+  overflow-y: auto;
+  background: rgba(20, 20, 32, 0.98);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 180, 70, 0.4);
+  border-radius: 6px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+  z-index: 50;
+}
+
+.order-line-combobox-item {
+  padding: 6px 8px;
+  font-size: 11px;
+  color: #fff;
+  cursor: pointer;
+  overflow-wrap: break-word;
+}
+
+.order-line-combobox-item:hover,
+.order-line-combobox-item-active {
+  background: rgba(255, 180, 70, 0.18);
+}
+
+.order-line-combobox-empty {
+  padding: 6px 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
 }
 
 .orders-empty-state {

@@ -12,7 +12,8 @@
 
   const PANE_ID = 'orders-pane';
 
-  let modelsCache = null; // lazy-loaded for the manual-link datalist
+  let modelsCache = null; // lazy-loaded for the manual-link combobox
+  let modelsFuse = null; // fuzzy-search index over modelsCache (built once, same data)
   let ordersListLoaded = false;
   let toastTimeout = null;
 
@@ -71,17 +72,26 @@
     return modelsCache;
   }
 
-  async function ensureModelsDatalist() {
-    if (document.getElementById('orders-models-datalist')) return;
+  /**
+   * Native <datalist> was the first cut of the manual-link control, but
+   * James reported it two ways: the browser's own suggestion popup doesn't
+   * scroll reliably with a few thousand models in it, and matching is
+   * prefix-only, not "recognize characters" (substring/fuzzy) search. Fuse
+   * is already vendored and loaded globally (vendor/fuse.min.js) for
+   * exactly this kind of search elsewhere in the app, just unused here
+   * until now - reuse it instead of hand-rolling matching, and render
+   * results into our own scrollable dropdown instead of a native popup.
+   */
+  async function ensureModelsFuse() {
+    if (modelsFuse) return modelsFuse;
     const models = await ensureModelsCache();
-    const datalist = document.createElement('datalist');
-    datalist.id = 'orders-models-datalist';
-    // Cap the list to keep the DOM light; a typed search still narrows the
-    // browser's native suggestions against whatever loaded.
-    datalist.innerHTML = models.slice(0, 3000).map((m) =>
-      `<option value="${escapeHtml(m.fileName)}"></option>`
-    ).join('');
-    document.body.appendChild(datalist);
+    modelsFuse = new window.Fuse(models, {
+      keys: ['fileName'],
+      threshold: 0.4,
+      ignoreLocation: true,
+      minMatchCharLength: 1
+    });
+    return modelsFuse;
   }
 
   // ============================================
@@ -146,8 +156,12 @@
         actionHtml = `<button type="button" class="order-line-action-btn" disabled title="Linked product has no primary model file to open">Open Product Manager</button>`;
       }
     } else {
-      actionHtml = `<input type="text" class="order-line-link-select" list="orders-models-datalist"
-          placeholder="Link to model..." data-action="link-model" data-line-id="${li.id}">`;
+      actionHtml = `
+        <div class="order-line-combobox" data-line-id="${li.id}">
+          <input type="text" class="order-line-link-input" placeholder="Link to model..."
+            data-action="link-model-input" data-line-id="${li.id}" autocomplete="off" spellcheck="false">
+          <div class="order-line-combobox-results" hidden></div>
+        </div>`;
     }
 
     const unmatchedClass = (li.link_status === 'unmatched') ? ' order-line-unmatched' : '';
@@ -203,7 +217,6 @@
     if (ordersListLoaded) return;
     ordersListLoaded = true;
     renderOrdersList();
-    ensureModelsDatalist();
   }
 
   // ============================================
@@ -248,31 +261,99 @@
     window.openShopifyProductEditorForPath(path);
   }
 
-  async function handleLinkModel(input) {
-    const lineId = input.dataset.lineId;
-    const typedName = input.value.trim();
-    if (!typedName) return;
+  const COMBOBOX_RESULT_LIMIT = 50;
+  const HIGHLIGHT_CLASS = 'order-line-combobox-item-active';
 
-    const models = await ensureModelsCache();
-    const match = models.find((m) => m.fileName === typedName);
-    if (!match) {
-      input.title = 'No model matches that name exactly — pick one from the list';
+  function closeCombobox(container) {
+    const resultsEl = container.querySelector('.order-line-combobox-results');
+    if (resultsEl) {
+      resultsEl.hidden = true;
+      resultsEl.innerHTML = '';
+    }
+  }
+
+  async function handleComboboxInput(input) {
+    const container = input.closest('.order-line-combobox');
+    const resultsEl = container?.querySelector('.order-line-combobox-results');
+    if (!resultsEl) return;
+
+    const query = input.value.trim();
+    if (!query) {
+      resultsEl.hidden = true;
+      resultsEl.innerHTML = '';
       return;
     }
 
-    input.disabled = true;
+    const fuse = await ensureModelsFuse();
+    const matches = fuse.search(query, { limit: COMBOBOX_RESULT_LIMIT });
+
+    if (!matches.length) {
+      resultsEl.innerHTML = '<div class="order-line-combobox-empty">No matching models</div>';
+      resultsEl.hidden = false;
+      return;
+    }
+
+    resultsEl.innerHTML = matches.map((m) =>
+      `<div class="order-line-combobox-item" data-model-id="${m.item.id}">${escapeHtml(m.item.fileName)}</div>`
+    ).join('');
+    resultsEl.hidden = false;
+  }
+
+  function moveComboboxHighlight(container, direction) {
+    const resultsEl = container.querySelector('.order-line-combobox-results');
+    if (!resultsEl || resultsEl.hidden) return;
+    const items = Array.from(resultsEl.querySelectorAll('.order-line-combobox-item'));
+    if (!items.length) return;
+    const currentIndex = items.findIndex((el) => el.classList.contains(HIGHLIGHT_CLASS));
+    let nextIndex = currentIndex + direction;
+    if (nextIndex < 0) nextIndex = items.length - 1;
+    if (nextIndex >= items.length) nextIndex = 0;
+    items.forEach((el) => el.classList.remove(HIGHLIGHT_CLASS));
+    items[nextIndex].classList.add(HIGHLIGHT_CLASS);
+    items[nextIndex].scrollIntoView({ block: 'nearest' });
+  }
+
+  async function selectModelForLine(container, modelId) {
+    const lineId = container.dataset.lineId;
+    const input = container.querySelector('.order-line-link-input');
+    closeCombobox(container);
+    if (input) {
+      input.disabled = true;
+      input.value = 'Linking…';
+    }
     try {
-      const result = await window.electron.linkOrderLineItem({ lineItemId: Number(lineId), modelId: match.id });
+      const result = await window.electron.linkOrderLineItem({ lineItemId: Number(lineId), modelId: Number(modelId) });
       if (result && result.error) {
         alert(`Could not link: ${result.error}`);
-        input.disabled = false;
+        if (input) { input.disabled = false; input.value = ''; }
         return;
       }
       await renderOrdersList();
       await refreshBadge();
     } catch (e) {
       alert(`Could not link: ${e.message || e}`);
-      input.disabled = false;
+      if (input) { input.disabled = false; input.value = ''; }
+    }
+  }
+
+  function handleComboboxKeydown(e, input) {
+    const container = input.closest('.order-line-combobox');
+    if (!container) return;
+    if (e.key === 'Escape') {
+      closeCombobox(container);
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      moveComboboxHighlight(container, 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      moveComboboxHighlight(container, -1);
+    } else if (e.key === 'Enter') {
+      const resultsEl = container.querySelector('.order-line-combobox-results');
+      const active = resultsEl?.querySelector(`.${HIGHLIGHT_CLASS}`) || resultsEl?.querySelector('.order-line-combobox-item');
+      if (active) {
+        e.preventDefault();
+        selectModelForLine(container, active.dataset.modelId);
+      }
     }
   }
 
@@ -288,9 +369,35 @@
       if (managerBtn) { handleOpenProductManager(managerBtn); return; }
     });
 
-    listEl.addEventListener('change', (e) => {
-      const input = e.target.closest('[data-action="link-model"]');
-      if (input) handleLinkModel(input);
+    listEl.addEventListener('input', (e) => {
+      const input = e.target.closest('[data-action="link-model-input"]');
+      if (input) handleComboboxInput(input);
+    });
+
+    listEl.addEventListener('keydown', (e) => {
+      const input = e.target.closest('[data-action="link-model-input"]');
+      if (input) handleComboboxKeydown(e, input);
+    });
+
+    // mousedown (not click) fires before the input's blur/focusout, so the
+    // selection is read before the dropdown would otherwise get torn down.
+    listEl.addEventListener('mousedown', (e) => {
+      const item = e.target.closest('.order-line-combobox-item');
+      if (!item) return;
+      e.preventDefault();
+      const container = item.closest('.order-line-combobox');
+      if (container) selectModelForLine(container, item.dataset.modelId);
+    });
+
+    // focusout bubbles (blur doesn't) - close the dropdown once focus
+    // actually leaves the combobox, with a short delay so a mousedown
+    // selection above still lands first.
+    listEl.addEventListener('focusout', (e) => {
+      const container = e.target.closest('.order-line-combobox');
+      if (!container) return;
+      setTimeout(() => {
+        if (!container.contains(document.activeElement)) closeCombobox(container);
+      }, 150);
     });
   }
 

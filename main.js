@@ -8292,65 +8292,92 @@ let shopifyOrderSyncInFlight = false;
 const SHOPIFY_ORDER_SYNC_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes; see GR-PLAN-006 open question on interval
 
 /**
- * Resolve a line item to a Printventory product. Three-way match, in order:
+ * Resolve a line item to a Printventory product. Checked in order, most
+ * specific (and safest to open directly) first:
  *
- *  1. SKU -> shopify_variants -> shopify_products.model_id ("auto-matched").
- *     The same lookup GR-PLAN-004's reconciliation already does. Covers the
- *     normal case: this exact variant was imported and has its own SKU row.
+ *  1. A confirmed per-variant file assignment, keyed on the Shopify
+ *     variant's own gid, via shopify_product_files.shopify_variant_id -
+ *     exactly what the product editor's variant picker
+ *     (populateVariantAssignments() in renderer.js) writes when a specific
+ *     variant is linked to a specific file. When this exists it's *the*
+ *     file for this exact line, whatever else is true about the product -
+ *     "auto-matched", opens directly in the slicer.
  *
- *  2. Parent Shopify product gid -> shopify_products.shopify_product_id
- *     ("product-linked"). Covers a line whose own SKU never got a
- *     shopify_variants row - most commonly a multi-variant bundle SKU (e.g.
- *     Halloween Ghosts' "complete set" option alongside its 8 individual
- *     ghosts) - but whose parent product IS linked in Printventory. The
- *     Orders pane can't open a single file for a bundle line with confidence,
- *     but it can open that product's own management dialog, which lists
- *     every variant (bundle included) with its own "open in slicer" action -
- *     see populateVariantAssignments() in renderer.js.
+ *  2. A SKU match via shopify_variants -> shopify_products, but only
+ *     trusted as "safe to open directly" when the product has a single
+ *     variant. A multi-variant product's shopify_products.model_id is
+ *     just its primary/representative model (e.g. the photo used for the
+ *     listing) - for a bundle or "complete set" SKU that was never given
+ *     its own per-variant file (caught by #1 when it was), opening that
+ *     representative file directly would silently print the wrong design.
+ *     James's own example: Halloween Ghosts has 8 individual-ghost SKUs
+ *     plus a 9th SKU covering the complete set of 8 - the set SKU matches
+ *     a shopify_variants row, but there's no single correct file for it.
+ *     So: single-variant product -> "auto-matched" (open directly).
+ *         multi-variant product   -> "product-linked" (open product manager).
  *
- *  3. Neither resolves -> "unmatched". Nothing in Printventory claims this
- *     line; falls to the manual-link box.
+ *  3. No SKU match, but the parent Shopify product gid resolves in
+ *     shopify_products - "product-linked" as well (the original bundle
+ *     fallback: the line's own SKU was never imported as a variant at all).
+ *
+ *  4. Nothing resolves - "unmatched", falls to the manual-link box.
  *
  * Returns { matchedModelId, matchedShopifyProductId, linkStatus }.
- * matchedModelId is shopify_products.model_id either way (the product's
- * primary model file) - callers use it to decide whether a "Open Product
- * Manager" action has anywhere to open, not to assume it's the specific
- * variant's own file when linkStatus is 'product-linked'.
  */
-function matchOrderLineItem(sku, productGid) {
+function matchOrderLineItem(sku, productGid, variantGid) {
   const cleanSku = sku && String(sku).trim();
+  const cleanGid = productGid && String(productGid).trim();
+  const cleanVariantGid = variantGid && String(variantGid).trim();
+
+  // Resolve the parent product up front - used both to judge whether a bare
+  // SKU match is safe to open directly, and as the final fallback itself.
+  let productRow = null;
   if (cleanSku) {
-    const row = db.prepare(`
+    productRow = db.prepare(`
       SELECT sp.id AS shopify_product_id, sp.model_id AS model_id
       FROM shopify_variants sv
       JOIN shopify_products sp ON sp.id = sv.product_id
       WHERE sv.sku = ?
       LIMIT 1
     `).get(cleanSku);
-    if (row) {
-      return {
-        matchedModelId: row.model_id || null,
-        matchedShopifyProductId: row.shopify_product_id || null,
-        linkStatus: 'auto-matched'
-      };
-    }
   }
-
-  const cleanGid = productGid && String(productGid).trim();
-  if (cleanGid) {
-    const row = db.prepare(`
+  if (!productRow && cleanGid) {
+    productRow = db.prepare(`
       SELECT id AS shopify_product_id, model_id
       FROM shopify_products
       WHERE shopify_product_id = ?
       LIMIT 1
     `).get(cleanGid);
-    if (row) {
+  }
+
+  if (cleanVariantGid) {
+    const assigned = db.prepare(`
+      SELECT m.id AS model_id
+      FROM shopify_product_files spf
+      JOIN models m ON m.id = spf.model_id
+      WHERE spf.shopify_variant_id = ?
+      LIMIT 1
+    `).get(cleanVariantGid);
+    if (assigned) {
       return {
-        matchedModelId: row.model_id || null,
-        matchedShopifyProductId: row.shopify_product_id || null,
-        linkStatus: 'product-linked'
+        matchedModelId: assigned.model_id,
+        matchedShopifyProductId: productRow ? productRow.shopify_product_id : null,
+        linkStatus: 'auto-matched'
       };
     }
+  }
+
+  if (productRow) {
+    const variantCountRow = db.prepare(`
+      SELECT COUNT(*) AS n FROM shopify_variants WHERE product_id = ?
+    `).get(productRow.shopify_product_id);
+    const variantCount = variantCountRow ? variantCountRow.n : 0;
+
+    return {
+      matchedModelId: productRow.model_id || null,
+      matchedShopifyProductId: productRow.shopify_product_id,
+      linkStatus: variantCount <= 1 ? 'auto-matched' : 'product-linked'
+    };
   }
 
   return { matchedModelId: null, matchedShopifyProductId: null, linkStatus: 'unmatched' };
@@ -8402,9 +8429,9 @@ async function syncShopifyOrdersHandler(event, options = {}) {
     INSERT INTO shopify_order_line_items (
       order_id, shopify_line_item_gid, sku, title, variant_title,
       unit_price, unit_price_currency, shopify_image_url, shopify_product_gid,
-      quantity_ordered, matched_model_id, matched_shopify_product_id,
-      link_status, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      shopify_variant_gid, quantity_ordered, matched_model_id,
+      matched_shopify_product_id, link_status, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(order_id, shopify_line_item_gid) DO UPDATE SET
       sku = excluded.sku,
       title = excluded.title,
@@ -8413,6 +8440,7 @@ async function syncShopifyOrdersHandler(event, options = {}) {
       unit_price_currency = excluded.unit_price_currency,
       shopify_image_url = excluded.shopify_image_url,
       shopify_product_gid = excluded.shopify_product_gid,
+      shopify_variant_gid = excluded.shopify_variant_gid,
       quantity_ordered = excluded.quantity_ordered,
       -- Never downgrade a manual link back to auto-matched/product-linked/unmatched
       -- on re-sync; only fill in a match if this line doesn't already have one.
@@ -8441,12 +8469,12 @@ async function syncShopifyOrdersHandler(event, options = {}) {
 
       for (const li of order.lineItems) {
         const { matchedModelId, matchedShopifyProductId, linkStatus } =
-          matchOrderLineItem(li.sku, li.productGid);
+          matchOrderLineItem(li.sku, li.productGid, li.variantId);
         if (linkStatus === 'auto-matched') newlyMatchedLines++; else unmatchedLines++;
         upsertLineItem.run(
           orderRow.id, li.id, li.sku, li.title, li.variantTitle,
           li.unitPrice, li.unitPriceCurrency, li.imageUrl, li.productGid,
-          li.quantity, matchedModelId, matchedShopifyProductId, linkStatus
+          li.variantId, li.quantity, matchedModelId, matchedShopifyProductId, linkStatus
         );
       }
     }
@@ -17575,6 +17603,7 @@ function ensureShopifyTablesExist() {
         unit_price_currency TEXT,
         shopify_image_url TEXT,
         shopify_product_gid TEXT,
+        shopify_variant_gid TEXT,
         quantity_ordered INTEGER NOT NULL DEFAULT 1,
         quantity_printed INTEGER NOT NULL DEFAULT 0,
         matched_model_id INTEGER,
@@ -17598,7 +17627,8 @@ function ensureShopifyTablesExist() {
       ['unit_price', 'REAL'],
       ['unit_price_currency', 'TEXT'],
       ['shopify_image_url', 'TEXT'],
-      ['shopify_product_gid', 'TEXT']
+      ['shopify_product_gid', 'TEXT'],
+      ['shopify_variant_gid', 'TEXT']
     ];
     for (const [colName, colType] of orderLineItemMigrations) {
       if (!orderLineItemColNames.includes(colName)) {
