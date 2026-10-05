@@ -8420,25 +8420,35 @@ function matchOrderLineItem(sku, productGid, variantGid) {
 
 /**
  * GR-PLAN-006: James asked to backfill historical orders that were already
- * shipped outside Printventory (shipped directly in Shopify admin before
- * Printventory existed, or via some other path) - "pull the historical
- * tracking info and remove the need to do anything." The signal used is
- * deliberately a real tracking NUMBER on one of the order's Shopify
- * fulfillments, never Shopify's own fulfillment_status alone - that status
- * also flips to "fulfilled" for an order toggled fulfilled with no tracking
- * during development/testing, which James separately confirmed still
- * genuinely needs printing/shipping. Picks the most recent fulfillment that
- * has one.
+ * shipped outside Printventory (shipped via Etsy/QuickSync before
+ * Printventory existed, or via any other path) - "pull the historical
+ * tracking info and remove the need to do anything."
+ *
+ * Round 1 of this trusted only a real tracking NUMBER on one of the
+ * order's Shopify fulfillments, deliberately not Shopify's own
+ * fulfillment_status alone. James then confirmed (screenshots of his real
+ * order list) that a whole subset of genuinely-shipped Etsy orders have no
+ * tracking info in Shopify at all - a QuickSync sync issue, not evidence
+ * they weren't shipped - so the tracking-only signal was too conservative
+ * and left real shipped orders cluttering the default view. Shopify's own
+ * displayFulfillmentStatus = 'FULFILLED' is trusted directly now (confirmed
+ * against his real data: every FULFILLED order in his list was a genuine
+ * past shipment). Still prefers real tracking info when a fulfillment has
+ * it - just doesn't require it.
  */
 function pickHistoricalShipment(order) {
   const fulfillments = Array.isArray(order.fulfillments) ? order.fulfillments : [];
-  let best = null;
+
+  // Prefer the most recent fulfillment that carries a real tracking number -
+  // lets the backfill record the actual carrier/tracking data when Shopify
+  // has it.
+  let bestWithTracking = null;
   for (const f of fulfillments) {
     const tracking = Array.isArray(f.tracking) ? f.tracking : [];
     const withNumber = tracking.find((t) => t && t.number);
     if (!withNumber) continue;
-    if (!best || new Date(f.createdAt) > new Date(best.createdAt)) {
-      best = {
+    if (!bestWithTracking || new Date(f.createdAt) > new Date(bestWithTracking.createdAt)) {
+      bestWithTracking = {
         createdAt: f.createdAt || null,
         carrier: withNumber.company || null,
         number: withNumber.number,
@@ -8446,7 +8456,26 @@ function pickHistoricalShipment(order) {
       };
     }
   }
-  return best;
+  if (bestWithTracking) return bestWithTracking;
+
+  // No tracking info anywhere, but Shopify itself says this order is fully
+  // fulfilled - trust that directly (not partial/unfulfilled/other states).
+  // Use the latest fulfillment's own date if one exists, so fulfilled_at
+  // reflects the real historical shipment date rather than "now".
+  if (order.fulfillmentStatus === 'FULFILLED') {
+    const latestFulfillment = fulfillments.reduce((latest, f) => {
+      if (!f.createdAt) return latest;
+      return (!latest || new Date(f.createdAt) > new Date(latest.createdAt)) ? f : latest;
+    }, null);
+    return {
+      createdAt: latestFulfillment?.createdAt || null,
+      carrier: null,
+      number: null,
+      url: null
+    };
+  }
+
+  return null;
 }
 
 /**
