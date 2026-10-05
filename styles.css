@@ -13586,11 +13586,25 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
   padding: 5px 8px;
   font-size: 11px;
   cursor: pointer;
+  box-sizing: border-box;
 }
 
 .order-ship-toggle:hover {
   background: rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.75);
+}
+
+/* James: "this is a little untidy ... can the whole section collapse
+   until ready?" - the toggle already collapses the panel below it
+   (hidden by default), but visually read as two separate floating boxes.
+   When the panel is open, flatten the seam between them so the toggle
+   reads as the header of one continuous card instead of a stray pill
+   sitting above an unrelated box; collapsed, the toggle is unaffected
+   (its sibling is [hidden], so :has() below simply doesn't match). */
+.order-ship-toggle:has(+ .order-ship-panel:not([hidden])) {
+  border-bottom: none;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 .order-ship-panel {
@@ -13602,6 +13616,14 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.08);
+  box-sizing: border-box;
+}
+
+.order-ship-toggle + .order-ship-panel:not([hidden]) {
+  margin-top: 0;
+  border-top: none;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
 }
 
 .order-ship-panel select,
@@ -13613,6 +13635,14 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
   padding: 6px 8px;
   font-size: 11px;
   color: #fff;
+  /* James: "Tracking number box doesnt line up" - a native <select>'s
+     width calculation (plus its built-in dropdown-arrow rendering) and a
+     plain <input>'s otherwise-identical border/padding don't resolve to
+     the same box without this: both default to content-box, so the
+     declared width:100% plus this rule's own padding/border were each
+     added ON TOP of 100%, overflowing the panel by slightly different,
+     inconsistent amounts between the two element types. */
+  box-sizing: border-box;
 }
 
 .order-ship-confirm-btn {
@@ -13625,6 +13655,7 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
+  box-sizing: border-box;
 }
 
 .order-ship-confirm-btn:hover:not(:disabled) {
