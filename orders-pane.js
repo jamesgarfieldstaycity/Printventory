@@ -2,10 +2,12 @@
  * Orders Pane (GR-PLAN-006): dockable panel showing Shopify orders synced
  * into shopify_orders / shopify_order_line_items, oldest-first (FIFO).
  * Delegates docking/pin/resize/autohide to PaneController, same as
- * Filters and Tools. Phase A scope: list orders + line items, open a
- * matched line's model file in the configured slicer, and manually link
- * an unmatched line to a model (reconciliation). "Mark Printed" and
- * fulfillment are Phase B/C, not here yet.
+ * Filters and Tools. Phase A: list orders + line items, open a matched
+ * line's model file in the configured slicer, and manually link an
+ * unmatched line to a model (reconciliation). Phase B (merged 2026-10-05,
+ * per James: "can you roll into a single phase"): Mark Printed per line
+ * (progress rolls up into the order's local_status) and a per-order
+ * fulfillment push (carrier + tracking -> Shopify's fulfillmentCreateV2).
  */
 (function () {
   'use strict';
@@ -16,6 +18,14 @@
   let modelsFuse = null; // fuzzy-search index over modelsCache (built once, same data)
   let ordersListLoaded = false;
   let toastTimeout = null;
+
+  // Matches Shopify's own fulfillment screen: a dropdown against Shopify's
+  // recognized carrier list (so trackingInfo.company matches well enough
+  // for Shopify to auto-generate the customer's tracking link), DPD pinned
+  // first as James's actual carrier, with a free-text fallback for
+  // anything else (see GR-PLAN-006's "Shipping / fulfillment" decision -
+  // no carrier API/account integration of any kind).
+  const CARRIER_OPTIONS = ['DPD', 'Royal Mail', 'UPS', 'FedEx', 'DHL Express', 'USPS', 'Other'];
 
   // ============================================
   // Register with PaneController
@@ -197,8 +207,64 @@
           <span class="order-line-qty-price">${escapeHtml(qtyPriceLabel)}</span>
         </div>
         <div class="order-line-action">${actionHtml}</div>
+        ${renderPrintedControl(li)}
       </div>
     `;
+  }
+
+  /**
+   * Mark Printed - only offered for a line whose own file is actually
+   * known (auto-matched/manually-linked), same gating as "Open in Slicer"
+   * - a product-linked bundle line is ambiguous at the line level (which
+   * variant?) until resolved through the product editor, so no control
+   * here for those (see GR-PLAN-006's matching-rule writeup). One click
+   * logs one unit printed via the model's existing print lifecycle;
+   * quantity > 1 lines show progress and support repeat clicks.
+   */
+  function renderPrintedControl(li) {
+    const isPrintable = li.link_status === 'auto-matched' || li.link_status === 'manually-linked';
+    if (!isPrintable) return '';
+    const ordered = Number(li.quantity_ordered) || 1;
+    const printed = Number(li.quantity_printed) || 0;
+    const progressLabel = ordered > 1 ? ` (${printed}/${ordered})` : '';
+    if (printed >= ordered) {
+      return `<div class="order-line-print-row"><span class="order-line-printed-done">✓ Printed${progressLabel}</span></div>`;
+    }
+    return `
+      <div class="order-line-print-row">
+        <button type="button" class="order-line-print-btn" data-action="mark-printed" data-line-id="${li.id}">Mark Printed${progressLabel}</button>
+      </div>`;
+  }
+
+  function renderLocalStatusPill(status) {
+    const s = status || 'new';
+    const label = { new: 'New', printing: 'Printing', printed: 'Printed', shipped: 'Shipped' }[s] || s;
+    return `<span class="order-local-status-pill order-local-status-${escapeHtml(s)}">${escapeHtml(label)}</span>`;
+  }
+
+  /**
+   * Once shipped, show the recorded result read-only - a fulfillment push
+   * is a one-way, Shopify-confirmed action, not something to re-do from
+   * here. Otherwise, a collapsed toggle opens the carrier/tracking form;
+   * the tracking URL field only matters for "Other" (Shopify auto-
+   * generates it for a recognized carrier like DPD).
+   */
+  function renderShipSection(order) {
+    if (order.local_status === 'shipped') {
+      const bits = [order.tracking_carrier, order.tracking_number].filter(Boolean).join(' · ');
+      return `<div class="order-ship-section order-ship-shipped">Shipped${bits ? ` — ${escapeHtml(bits)}` : ''}</div>`;
+    }
+    const carrierOptionsHtml = CARRIER_OPTIONS.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+    return `
+      <div class="order-ship-section" data-order-id="${order.id}">
+        <button type="button" class="order-ship-toggle" data-action="toggle-ship">Ship order…</button>
+        <div class="order-ship-panel" hidden>
+          <select class="order-ship-carrier">${carrierOptionsHtml}</select>
+          <input type="text" class="order-ship-tracking-number" placeholder="Tracking number" autocomplete="off">
+          <input type="text" class="order-ship-tracking-url" placeholder="Tracking URL (only needed for 'Other')" autocomplete="off" hidden>
+          <button type="button" class="order-ship-confirm-btn" data-action="confirm-ship" data-order-id="${order.id}">Mark Shipped</button>
+        </div>
+      </div>`;
   }
 
   function renderOrderCard(order) {
@@ -209,8 +275,12 @@
           <span class="order-card-name">${escapeHtml(order.order_name)}</span>
           <span class="order-card-customer">${escapeHtml(order.customer_name || '')}</span>
         </div>
-        <div class="order-card-meta">${formatOrderDate(order.order_created_at)} · ${escapeHtml(order.financial_status || '')}</div>
+        <div class="order-card-meta">
+          ${formatOrderDate(order.order_created_at)} · ${escapeHtml(order.financial_status || '')}
+          ${renderLocalStatusPill(order.local_status)}
+        </div>
         <div class="order-lines">${lines}</div>
+        ${renderShipSection(order)}
       </div>
     `;
   }
@@ -278,6 +348,65 @@
       return;
     }
     window.openShopifyProductEditorForPath(path);
+  }
+
+  async function handleMarkPrinted(btn) {
+    const lineId = btn.dataset.lineId;
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = 'Marking…';
+    try {
+      const result = await window.electron.markOrderLineItemPrinted({ lineItemId: Number(lineId), quantity: 1 });
+      if (result && result.error) {
+        alert(`Could not mark printed: ${result.error}`);
+        btn.disabled = false;
+        btn.textContent = original;
+        return;
+      }
+      await renderOrdersList();
+    } catch (e) {
+      alert(`Could not mark printed: ${e.message || e}`);
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+
+  async function handleShipOrder(btn) {
+    const orderId = btn.dataset.orderId;
+    const panel = btn.closest('.order-ship-panel');
+    const carrier = panel?.querySelector('.order-ship-carrier')?.value || '';
+    const numberInput = panel?.querySelector('.order-ship-tracking-number');
+    const urlInput = panel?.querySelector('.order-ship-tracking-url');
+    const trackingNumber = (numberInput?.value || '').trim();
+    const trackingUrl = (urlInput?.value || '').trim();
+
+    if (!trackingNumber) {
+      alert('Enter a tracking number first.');
+      return;
+    }
+    if (!confirm(`Mark this order shipped via ${carrier} (${trackingNumber})?\n\nThis notifies the customer through Shopify.`)) {
+      return;
+    }
+
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = 'Shipping…';
+    try {
+      const result = await window.electron.shipShopifyOrder({
+        orderId: Number(orderId), carrier, trackingNumber, trackingUrl: trackingUrl || null
+      });
+      if (result && result.error) {
+        alert(`Could not mark shipped: ${result.error}`);
+        btn.disabled = false;
+        btn.textContent = original;
+        return;
+      }
+      await renderOrdersList();
+    } catch (e) {
+      alert(`Could not mark shipped: ${e.message || e}`);
+      btn.disabled = false;
+      btn.textContent = original;
+    }
   }
 
   const COMBOBOX_RESULT_LIMIT = 50;
@@ -424,6 +553,26 @@
       if (managerBtn) { handleOpenProductManager(managerBtn); return; }
       const linkInput = e.target.closest('[data-action="link-model-input"]');
       if (linkInput) { handleComboboxActivate(linkInput); return; }
+      const printBtn = e.target.closest('[data-action="mark-printed"]');
+      if (printBtn) { handleMarkPrinted(printBtn); return; }
+      const shipToggleBtn = e.target.closest('[data-action="toggle-ship"]');
+      if (shipToggleBtn) {
+        const panel = shipToggleBtn.nextElementSibling;
+        if (panel) panel.hidden = !panel.hidden;
+        return;
+      }
+      const shipConfirmBtn = e.target.closest('[data-action="confirm-ship"]');
+      if (shipConfirmBtn) { handleShipOrder(shipConfirmBtn); return; }
+    });
+
+    // Shopify auto-generates the tracking link for a recognized carrier
+    // (DPD etc.) but not for free text, so the URL field only matters - and
+    // only shows - when "Other" is selected.
+    listEl.addEventListener('change', (e) => {
+      const select = e.target.closest('.order-ship-carrier');
+      if (!select) return;
+      const urlInput = select.closest('.order-ship-panel')?.querySelector('.order-ship-tracking-url');
+      if (urlInput) urlInput.hidden = select.value !== 'Other';
     });
 
     // Double-clicking anywhere on a line card opens the product manager

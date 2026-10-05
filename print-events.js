@@ -251,6 +251,13 @@ function ensurePrintLifecycleSchema(db) {
       db.prepare('ALTER TABLE print_events ADD COLUMN printer_id INTEGER').run();
       db.prepare('CREATE INDEX IF NOT EXISTS idx_print_events_printer_id ON print_events(printer_id)').run();
     }
+    // GR-PLAN-006 Phase B: optional elapsed-print-duration logging, so real
+    // duration-per-model history starts accumulating for a future
+    // data-grounded print-sequencing phase (see GR-PLAN-006's FIFO/Phase C
+    // decision) - nobody has to fill it in, Mark Printed works without it.
+    if (!tableInfo.some((col) => col.name === 'duration_seconds')) {
+      db.prepare('ALTER TABLE print_events ADD COLUMN duration_seconds INTEGER').run();
+    }
   } catch (_) {}
   ensurePartsSchema(db);
 }
@@ -399,13 +406,15 @@ function logPrintEvent(db, payload) {
   const partsUsage = normalizePartsUsage(payload.parts);
   const printerIdRaw = payload?.printerId ?? payload?.printer_id;
   const printerId = printerIdRaw != null && Number(printerIdRaw) > 0 ? Number(printerIdRaw) : null;
+  const durationRaw = payload?.durationSeconds ?? payload?.duration_seconds;
+  const durationSeconds = durationRaw != null && Number(durationRaw) >= 0 ? Math.round(Number(durationRaw)) : null;
   const createdAt = new Date().toISOString();
 
   const result = db.transaction(() => {
     const insert = db.prepare(`
-      INSERT INTO print_events (model_id, printed_at, outcome, quantity, notes, created_at, printer_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(modelId, printedAt, outcome, quantity, notes || null, createdAt, printerId);
+      INSERT INTO print_events (model_id, printed_at, outcome, quantity, notes, created_at, printer_id, duration_seconds)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(modelId, printedAt, outcome, quantity, notes || null, createdAt, printerId, durationSeconds);
     const eventId = insert.lastInsertRowid;
     const link = db.prepare('INSERT OR IGNORE INTO print_event_filaments (event_id, filament_id) VALUES (?, ?)');
     for (const filamentId of filamentIds) {

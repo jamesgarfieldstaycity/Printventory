@@ -174,6 +174,8 @@ contextBridge.exposeInMainWorld('electron', {
   linkOrderLineItem: (args) => ipcRenderer.invoke('link-order-line-item', args),
   getShopifyOrdersBadgeCount: () => ipcRenderer.invoke('get-shopify-orders-badge-count'),
   onShopifyOrdersSynced: (callback) => ipcRenderer.on('shopify-orders-synced', (event, summary) => callback(summary)),
+  markOrderLineItemPrinted: (args) => ipcRenderer.invoke('mark-order-line-item-printed', args),
+  shipShopifyOrder: (args) => ipcRenderer.invoke('ship-shopify-order', args),
   getLinkedShopifyProductIds: () => ipcRenderer.invoke('get-linked-shopify-product-ids'),
   getUnlinkedFolders: (includeSkipped) => ipcRenderer.invoke('get-unlinked-folders', includeSkipped),
   getUnlinkedProducts: () => ipcRenderer.invoke('get-unlinked-products'), // Legacy alias

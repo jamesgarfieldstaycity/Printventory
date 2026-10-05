@@ -1120,6 +1120,111 @@ async function fetchOrders(storeDomain, clientId, clientSecret, options = {}) {
   return allOrders;
 }
 
+/**
+ * Fetch the order's open fulfillment order (GR-PLAN-006 Phase B fulfillment
+ * push). A self-fulfilled, single-location shop normally has exactly one
+ * fulfillable FulfillmentOrder per order; returns the first OPEN one (or
+ * the first of whatever comes back, so a genuinely unusual state still
+ * surfaces a real Shopify error from fulfillmentCreateV2 rather than a
+ * silent no-op here).
+ */
+async function fetchFulfillmentOrderForOrder(storeDomain, clientId, clientSecret, orderGid) {
+  const accessToken = await getAccessToken(storeDomain, clientId, clientSecret);
+
+  const query = `
+    query getOrderFulfillmentOrders($id: ID!) {
+      order(id: $id) {
+        fulfillmentOrders(first: 5) {
+          edges {
+            node {
+              id
+              status
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const data = await graphqlRequest(storeDomain, accessToken, query, { id: orderGid });
+  const nodes = (data.order?.fulfillmentOrders?.edges || []).map((e) => e.node);
+  const open = nodes.find((n) => n.status === 'OPEN') || nodes[0];
+
+  if (!open) {
+    throw new Error('No fulfillment order found for this order - it may already be fully fulfilled, or its data has not synced from Shopify yet.');
+  }
+
+  return open.id;
+}
+
+/**
+ * Create a fulfillment for a FulfillmentOrder using the current
+ * fulfillmentCreateV2 mutation - the legacy fulfillmentCreate mutation is
+ * deprecated, same shape of change GR-PLAN-004 already made for
+ * productVariantUpdate -> productVariantsBulkUpdate. Omitting
+ * fulfillmentOrderLineItems fulfills the fulfillment order's entire
+ * remaining fulfillable quantity, matching James's own described workflow
+ * (shipping generated once per order, not itemized per line).
+ *
+ * @param {object} args
+ * @param {string} args.fulfillmentOrderId
+ * @param {string} [args.trackingNumber]
+ * @param {string} [args.trackingCompany] - matched against Shopify's own
+ *   internal carrier list to auto-generate the customer's tracking link; no
+ *   carrier API/account connection involved (see GR-PLAN-006).
+ * @param {string} [args.trackingUrl] - only meaningful for an
+ *   unrecognized/free-text carrier; Shopify auto-generates it otherwise.
+ * @param {boolean} [args.notifyCustomer=true]
+ */
+async function createFulfillment(storeDomain, clientId, clientSecret, args) {
+  const { fulfillmentOrderId, trackingNumber, trackingCompany, trackingUrl, notifyCustomer = true } = args || {};
+  const accessToken = await getAccessToken(storeDomain, clientId, clientSecret);
+
+  const mutation = `
+    mutation fulfillmentCreateV2($fulfillment: FulfillmentV2Input!) {
+      fulfillmentCreateV2(fulfillment: $fulfillment) {
+        fulfillment {
+          id
+          status
+          trackingInfo {
+            number
+            url
+            company
+          }
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const trackingInfo = trackingNumber ? {
+    number: trackingNumber,
+    company: trackingCompany || null,
+    url: trackingUrl || null
+  } : undefined;
+
+  const input = {
+    lineItemsByFulfillmentOrder: [{ fulfillmentOrderId }],
+    notifyCustomer,
+    ...(trackingInfo ? { trackingInfo } : {})
+  };
+
+  console.log('[Shopify] fulfillmentCreateV2:', JSON.stringify(input, null, 2));
+
+  const data = await graphqlRequest(storeDomain, accessToken, mutation, { fulfillment: input });
+  const errors = data.fulfillmentCreateV2?.userErrors;
+  if (errors?.length > 0) {
+    console.error('[Shopify] fulfillmentCreateV2 errors:', errors);
+    throw new Error(errors.map((e) => `${e.field}: ${e.message}`).join('; '));
+  }
+
+  console.log('[Shopify] Fulfillment created:', data.fulfillmentCreateV2.fulfillment?.id);
+  return data.fulfillmentCreateV2.fulfillment;
+}
+
 module.exports = {
   SHOPIFY_API_VERSION,
   buildEndpoint,
@@ -1140,6 +1245,8 @@ module.exports = {
   uploadProductImages,
   fetchAllProducts,
   fetchOrders,
+  fetchFulfillmentOrderForOrder,
+  createFulfillment,
   graphqlRequest,
   getPrimaryLocationId,
   getInventoryItemId,

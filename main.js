@@ -8626,6 +8626,157 @@ async function linkOrderLineItemHandler(event, { lineItemId, modelId }) {
 ipcMain.handle('link-order-line-item', linkOrderLineItemHandler);
 ipcHandlerRegistry.set('link-order-line-item', linkOrderLineItemHandler);
 
+// --- GR-PLAN-006 Phase B (merged 2026-10-05, per James: "can you roll into
+// a single phase"): print workflow (Mark Printed) + fulfillment, built
+// together rather than as two sequential phases. ---
+
+/**
+ * Roll up an order's local_status from its line items' print progress
+ * (new -> printing -> printed), Printventory-side only - never written
+ * back to Shopify before the fulfillment push (see GR-PLAN-006's "Shipping
+ * / fulfillment" decision). Never downgrades out of 'shipped': once the
+ * fulfillment push succeeds that's a one-way, Shopify-confirmed state.
+ */
+function recomputeOrderLocalStatus(orderId) {
+  const order = db.prepare('SELECT local_status FROM shopify_orders WHERE id = ?').get(orderId);
+  if (!order || order.local_status === 'shipped') return order ? order.local_status : null;
+
+  const lines = db.prepare(`
+    SELECT quantity_ordered, quantity_printed FROM shopify_order_line_items WHERE order_id = ?
+  `).all(orderId);
+
+  let status = 'new';
+  if (lines.length) {
+    const allPrinted = lines.every((l) => (Number(l.quantity_printed) || 0) >= (Number(l.quantity_ordered) || 1));
+    const anyPrinted = lines.some((l) => (Number(l.quantity_printed) || 0) > 0);
+    status = allPrinted ? 'printed' : (anyPrinted ? 'printing' : 'new');
+  }
+
+  db.prepare('UPDATE shopify_orders SET local_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, orderId);
+  return status;
+}
+
+/**
+ * "Mark Printed" - logs a real print_events row against the line's linked
+ * model, reusing the model's existing print lifecycle (print_status /
+ * print_count / last_printed_at via printEvents.logPrintEvent) rather than
+ * a second, parallel status field - then advances the line's own
+ * quantity_printed (supports partial progress on a quantity > 1 line, one
+ * click per unit printed) and recomputes the order's local_status rollup.
+ * Never touches Shopify - printing progress stays Printventory-only until
+ * the fulfillment push below marks the order shipped.
+ */
+async function markOrderLineItemPrintedHandler(event, { lineItemId, quantity, durationSeconds, notes } = {}) {
+  try {
+    const li = db.prepare(`
+      SELECT id, order_id, matched_model_id, quantity_ordered, quantity_printed
+      FROM shopify_order_line_items WHERE id = ?
+    `).get(lineItemId);
+    if (!li) return { error: 'Order line not found' };
+    if (!li.matched_model_id) return { error: 'This line has no linked model to print yet' };
+
+    const ordered = Number(li.quantity_ordered) || 1;
+    const alreadyPrinted = Number(li.quantity_printed) || 0;
+    const requested = Math.max(1, Number(quantity) || 1);
+    const newPrinted = Math.min(ordered, alreadyPrinted + requested);
+    const actuallyLogged = newPrinted - alreadyPrinted;
+    if (actuallyLogged <= 0) return { error: 'Already fully printed' };
+
+    const result = db.transaction(() => {
+      printEvents.logPrintEvent(db, {
+        modelId: li.matched_model_id,
+        outcome: 'printed',
+        quantity: actuallyLogged,
+        printedAt: new Date().toISOString(),
+        durationSeconds,
+        notes
+      });
+      db.prepare(`
+        UPDATE shopify_order_line_items SET quantity_printed = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+      `).run(newPrinted, lineItemId);
+      const localStatus = recomputeOrderLocalStatus(li.order_id);
+      return { quantityPrinted: newPrinted, localStatus };
+    })();
+
+    // Reuse the same event the Orders pane already listens to for a sync
+    // (see "Order-line staleness" decision in GR-PLAN-006) so the pane
+    // refreshes live with no new listener needed - the sync-count fields
+    // are meaningless here and ignored by the renderer either way.
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('shopify-orders-synced', {
+        ordersSynced: 0, newOrders: 0, newlyMatchedLines: 0, unmatchedLines: 0
+      });
+    }
+
+    return { success: true, ...result };
+  } catch (error) {
+    console.error('Error marking order line item printed:', error);
+    return { error: error.message || String(error) };
+  }
+}
+ipcMain.handle('mark-order-line-item-printed', markOrderLineItemPrintedHandler);
+ipcHandlerRegistry.set('mark-order-line-item-printed', markOrderLineItemPrintedHandler);
+
+/**
+ * Fulfillment push - separate action from Mark Printed, matching James's
+ * own described workflow ("shipping generated separately... adds the
+ * shipping info to the order, marks it fulfilled"). Calls Shopify's
+ * FulfillmentOrder-based flow (fulfillmentCreateV2). No carrier API
+ * integration of any kind - trackingCompany is just matched against
+ * Shopify's own internal carrier list to auto-generate the customer's
+ * tracking link; label generation stays James's separate existing process
+ * (see GR-PLAN-006's "Shipping / fulfillment" and "out of scope" sections).
+ * A failed call leaves local_status/tracking fields untouched so James can
+ * just retry - nothing is recorded locally until Shopify confirms it.
+ */
+async function shipShopifyOrderHandler(event, { orderId, carrier, trackingNumber, trackingUrl } = {}) {
+  try {
+    const order = db.prepare('SELECT id, shopify_order_gid, local_status FROM shopify_orders WHERE id = ?').get(orderId);
+    if (!order) return { error: 'Order not found' };
+    if (order.local_status === 'shipped') return { error: 'This order is already marked shipped' };
+    if (!trackingNumber) return { error: 'Enter a tracking number first' };
+
+    const settings = readShopifySettings();
+    if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
+      return { error: 'Shopify credentials not configured' };
+    }
+
+    const fulfillmentOrderId = await shopifyApi.fetchFulfillmentOrderForOrder(
+      settings.storeDomain, settings.clientId, settings.clientSecret, order.shopify_order_gid
+    );
+    await shopifyApi.createFulfillment(
+      settings.storeDomain, settings.clientId, settings.clientSecret,
+      {
+        fulfillmentOrderId,
+        trackingNumber,
+        trackingCompany: carrier || null,
+        trackingUrl: trackingUrl || null,
+        notifyCustomer: true
+      }
+    );
+
+    db.prepare(`
+      UPDATE shopify_orders
+      SET local_status = 'shipped', tracking_carrier = ?, tracking_number = ?, tracking_url = ?,
+          fulfilled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(carrier || null, trackingNumber, trackingUrl || null, orderId);
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('shopify-orders-synced', {
+        ordersSynced: 0, newOrders: 0, newlyMatchedLines: 0, unmatchedLines: 0
+      });
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error shipping Shopify order:', error);
+    return { error: error.message || String(error) };
+  }
+}
+ipcMain.handle('ship-shopify-order', shipShopifyOrderHandler);
+ipcHandlerRegistry.set('ship-shopify-order', shipShopifyOrderHandler);
+
 /** Starts the background order-sync poll (manual "Sync now" always available via the IPC handler above regardless). */
 function startShopifyOrderSyncWatcher() {
   if (shopifyOrderSyncTimer) return;

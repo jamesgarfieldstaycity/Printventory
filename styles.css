@@ -13473,6 +13473,141 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
   cursor: default;
 }
 
+/* GR-PLAN-006 Phase B: Mark Printed row, under the existing action row */
+.order-line-print-row {
+  display: flex;
+}
+
+.order-line-print-btn {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.order-line-print-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.order-line-print-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.order-line-printed-done {
+  font-size: 11px;
+  color: #4ade80;
+  padding: 5px 2px;
+}
+
+/* GR-PLAN-006 Phase B: order-level local_status pill, next to the
+   date/financial-status line in the card header area */
+.order-local-status-pill {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.order-local-status-new {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.order-local-status-printing {
+  background: rgba(255, 180, 70, 0.15);
+  color: #ffb446;
+}
+
+.order-local-status-printed {
+  background: rgba(74, 158, 255, 0.15);
+  color: #4a9eff;
+}
+
+.order-local-status-shipped {
+  background: rgba(74, 222, 128, 0.15);
+  color: #4ade80;
+}
+
+/* GR-PLAN-006 Phase B: per-order fulfillment push (carrier + tracking) */
+.order-ship-section {
+  margin-top: 2px;
+}
+
+.order-ship-shipped {
+  font-size: 11px;
+  color: #4ade80;
+  padding: 4px 2px;
+}
+
+.order-ship-toggle {
+  width: 100%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.order-ship-toggle:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.order-ship-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.order-ship-panel select,
+.order-ship-panel input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: #fff;
+}
+
+.order-ship-confirm-btn {
+  width: 100%;
+  background: rgba(74, 222, 128, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.order-ship-confirm-btn:hover:not(:disabled) {
+  background: rgba(74, 222, 128, 0.25);
+}
+
+.order-ship-confirm-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* Manual-link combobox (replaces a native <datalist> input, GR-PLAN-006):
    James reported the browser's own suggestion popup didn't scroll
    reliably with thousands of models, and only matched by prefix. This is
