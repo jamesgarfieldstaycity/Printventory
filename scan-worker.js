@@ -225,6 +225,17 @@ async function calculateFileHash(filePath) {
 }
 
 async function scanDirectory(directoryPath, maxFileSize, enableZipArchives = false, scanExtensions = null, excludeDirectories = null) {
+  // Library folder roots are stored with forward slashes for consistent DB
+  // storage/matching (see main.js's isUncPath comment), including network
+  // shares typed as //server/share/... . That spelling is accepted by our own
+  // UNC validation and by Node's path utilities, but it is NOT reliable for
+  // actual Windows file I/O: fs.promises.readdir() below can silently fail
+  // (ENOENT) on a literal //server/share path even though \\server\share
+  // works fine - and the catch block in processDirectory() only logs that
+  // failure, it never surfaces it, so the scan completes as if it succeeded
+  // having found nothing. path.resolve() normalizes to the real native form
+  // (\\server\share\... on win32) with no effect on an already-native path.
+  directoryPath = path.resolve(directoryPath);
   const files = [];
   /** Every file-type dirent seen while walking the tree (matches legacy totalFiles meaning). */
   let traversedFileEntries = 0;
@@ -267,7 +278,8 @@ async function scanDirectory(directoryPath, maxFileSize, enableZipArchives = fal
 
   // Promise to signal completion
   let resolveDone;
-  const donePromise = new Promise(resolve => { resolveDone = resolve; });
+  let rejectDone;
+  const donePromise = new Promise((resolve, reject) => { resolveDone = resolve; rejectDone = reject; });
 
   const processNext = () => {
     // If no active ops and queue is empty, we are done
@@ -333,6 +345,21 @@ async function scanDirectory(directoryPath, maxFileSize, enableZipArchives = fal
       }
     } catch (err) {
       console.error(`Skipping directory ${dirPath} due to error: ${err.message}`);
+      // A failure on the scan ROOT itself (e.g. a network share that's offline,
+      // unreachable, or no longer has the right credentials) must not be
+      // swallowed the way a failure on some nested subfolder reasonably is -
+      // previously this was only logged here, so the scan would "complete"
+      // having found nothing and the caller (and user) had no way to tell a
+      // real failure apart from a folder that's simply empty. processDirectory
+      // runs fire-and-forget via .finally() (see processNext above), so a
+      // plain throw here would become an unhandled rejection rather than
+      // reaching the caller - reject the scan's own donePromise directly
+      // instead, which the worker's message handler already turns into a
+      // proper { type: 'error' } postMessage.
+      if (dirPath === directoryPath) {
+        rejectDone(err);
+        return;
+      }
     }
   };
 

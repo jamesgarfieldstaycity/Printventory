@@ -327,14 +327,17 @@ const analytics = {
 // Near the top of the file, add this line
 const { version } = require('./package.json');
 
-let isDev = false;
-try {
-  const electronIsDev = require('electron-is-dev');
-  isDev = electronIsDev;
-} catch (error) {
-  // If electron-is-dev is not available, determine dev mode through other means
-  isDev = process.env.NODE_ENV === 'development' || /[\\/]electron/i.test(process.execPath);
-}
+// 'electron-is-dev' is not actually a listed dependency (not in package.json,
+// not in node_modules even transitively) - the require() below ALWAYS throws,
+// in dev and in every packaged build alike, so isDev was unconditionally being
+// decided by the regex fallback, never by the (correct, Electron-native)
+// app.isPackaged check the comment implies this was trying to use. That
+// fallback regex misdetects on a packaged build whose exe name/path happens
+// to contain "electron" for any reason (e.g. an unrenamed or portable build),
+// silently flipping getDatabasePath() and anything else gated on isDev back
+// to dev-mode behavior in a build the user believes is a normal release
+// install. app.isPackaged is the real, built-in, always-correct signal.
+const isDev = !app.isPackaged;
 
 const DEBUG = false; // Set to true for development/debugging
 const PING_INTERVAL = 30000; // 30 seconds
@@ -4009,304 +4012,16 @@ async function createWindow() {
     }
   );
 
-  const template = [
-    {
-      label: 'File',
-      submenu: [
-        {
-          label: 'Reload',
-          click: () => mainWindow.webContents.reload()
-        },
-        { type: 'separator' },
-        { role: 'quit' }
-      ]
-    },
-    {
-      label: 'Edit',
-      submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'pasteAndMatchStyle' },
-        { role: 'delete' },
-        { role: 'selectAll' }
-      ]
-    },
-    {
-      label: 'View',
-      submenu: [
-        {
-          id: 'filters-pane-toggle',
-          label: 'Filters Pane',
-          type: 'checkbox',
-          checked: true,
-          accelerator: 'CmdOrCtrl+Shift+F',
-          click: (menuItem) => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('toggle-filters-pane');
-            }
-          }
-        },
-        {
-          id: 'sidebar-toggle',
-          label: 'Sidebar',
-          type: 'checkbox',
-          checked: false,
-          accelerator: 'CmdOrCtrl+Shift+S',
-          click: (menuItem) => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('toggle-sidebar');
-            }
-          }
-        },
-        { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { type: 'separator' },
-        { role: 'togglefullscreen' },
-        { type: 'separator' },
-        { role: 'reload' },
-        { role: 'forceReload' },
-        { role: 'toggleDevTools' }
-      ]
-    },
-    {
-      label: 'Settings',
-      submenu: [
-        {
-          label: 'AI Config',
-          click: () => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('open-ai-config');
-            }
-          }
-        },
-        {
-          label: 'File Type',
-          click: () => mainWindow.webContents.send('open-file-type-settings')
-        },
-        {
-          label: 'Performance',
-          click: () => mainWindow.webContents.send('open-performance-settings')
-        },
-        {
-          label: 'Slicer Path',
-          click: () => mainWindow.webContents.send('open-slicer-settings')
-        },
-        {
-          label: 'STL Home',
-          click: () => mainWindow.webContents.send('open-stl-home')
-        },
-        {
-          label: 'Theme',
-          click: () => mainWindow.webContents.send('open-theme-settings')
-        }
-      ]
-    },
-    {
-      label: 'Tools',
-      submenu: [
-        {
-          label: 'Print Roulette',
-          click: () => mainWindow.webContents.send('start-print-roulette')
-        },
-        {
-          label: 'De-Dup',
-          click: () => {
-            mainWindow.webContents.send('open-dedup');
-          }
-        },
-        ...(isServerMode ? [] : [{
-          label: 'Browser Extension',
-          click: () => mainWindow.webContents.send('open-browser-extension-settings')
-        }]),
-        {
-          label: 'MCP Server',
-          submenu: [
-            {
-              label: 'Settings',
-              click: () => {
-                if (mainWindow && !mainWindow.isDestroyed()) {
-                  mainWindow.webContents.send('open-mcp-server-settings');
-                }
-              }
-            },
-            {
-              label: 'HTTPS / SSL',
-              click: () => {
-                if (mainWindow && !mainWindow.isDestroyed()) {
-                  mainWindow.webContents.send('open-https-settings');
-                }
-              }
-            }
-          ]
-        },
-        {
-          label: 'Shopify',
-          click: () => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('open-shopify-settings');
-            }
-          }
-        },
-        { type: 'separator' },
-        {
-          label: 'Filament Manager',
-          click: () => mainWindow.webContents.send('open-filament-manager')
-        },
-        {
-          label: 'Printer Manager',
-          click: () => mainWindow.webContents.send('open-printer-management')
-        },
-        {
-          label: 'Parts Manager',
-          click: () => mainWindow.webContents.send('open-parts-stock')
-        },
-        {
-          label: 'Tag Manager',
-          click: () => mainWindow.webContents.send('open-tag-manager')
-        },
-        {
-          label: 'Metadata Manager',
-          click: () => mainWindow.webContents.send('open-metadata-editor')
-        },
-        { type: 'separator' },
-        {
-          label: 'Clear New Flag',
-          click: () => {
-            if (isServerMode && global.broadcastEvent) {
-              global.broadcastEvent('clear-new-flags');
-            } else {
-              mainWindow.webContents.send('clear-new-flags');
-            }
-          }
-        },
-        {
-          label: 'Regenerate Thumbnails',
-          click: () => {
-            if (isServerMode && global.broadcastEvent) {
-              global.broadcastEvent('regenerate-thumbnails');
-            } else {
-              mainWindow.webContents.send('regenerate-thumbnails');
-            }
-          }
-        },
-        {
-          label: 'Generate Missing Thumbnails',
-          click: () => {
-            if (isServerMode && global.broadcastEvent) {
-              global.broadcastEvent('generate-missing-thumbnails');
-            } else {
-              mainWindow.webContents.send('generate-missing-thumbnails');
-            }
-          }
-        },
-        {
-          label: 'Purge Models',
-          click: () => mainWindow.webContents.send('open-purge-models')
-        },
-        { type: 'separator' },
-        {
-          label: 'Backup/Restore',
-          click: () => mainWindow.webContents.send('open-backup-restore')
-        }
-      ]
-    },
-    {
-      label: 'Help',
-      submenu: [
-        {
-          label: 'Quick Start Guide',
-          click: () => {
-            mainWindow.webContents.send('open-guide');
-          }
-        },
-        {
-          label: 'Keyboard Shortcuts',
-          click: () => {
-            mainWindow.webContents.send('open-keyboard-shortcuts');
-          }
-        },
-        {
-          label: 'FAQ',
-          click: async () => {
-            await shell.openExternal('https://printventory.com/faq.html');
-          }
-        },
-        {
-          label: 'About',
-          click: async () => {
-            // Send event to renderer to open the about dialog
-            mainWindow.webContents.send('open-about');
-            
-            // Log for debugging
-            console.log('About menu item clicked');
-          }
-        },
-        { type: 'separator' },
-        {
-          label: 'Discord',
-          click: async () => {
-            await shell.openExternal('https://discord.gg/JXcZHT77ua');
-          }
-        },
-        {
-          label: 'Patreon',
-          click: async () => {
-            await shell.openExternal('https://patreon.com/Printventory');
-          }
-        },
-        {
-          label: 'Support Printventory',
-          click: async () => {
-            await shell.openExternal('https://printventory.com/support.html');
-          }
-        },
-        {
-          label: 'GitHub',
-          click: async () => {
-            await shell.openExternal('https://github.com/TechJeeper/Printventory');
-          }
-        },
-        { type: 'separator' },
-        {
-          label: 'Library Stats',
-          click: () => {
-            mainWindow.webContents.send('open-stats');
-          }
-        },
-        ...(isServerMode ? [{
-          label: 'System Report',
-          click: () => {
-            mainWindow.webContents.send('open-system-report');
-          }
-        }] : []),
-        {
-          label: 'Server Mode Info',
-          click: async () => {
-            await shell.openExternal('https://github.com/TechJeeper/Printventory?tab=readme-ov-file#server-mode');
-          }
-        },
-        {
-          label: 'Send Logs',
-          click: () => {
-            sendSupportLogsFromMenu();
-          }
-        },
-        {
-          label: 'Debug Console',
-          click: () => mainWindow.webContents.openDevTools()
-        }
-      ]
-    }
-  ];
-
-  const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
+  // The application menu (File/Edit/View/Settings/Tools/Help) used to be built
+  // here AND in the separate createApplicationMenu() function below - the copy
+  // here ran first, then createApplicationMenu() (called right after createWindow()
+  // returns, in app.whenReady()'s normal-mode branch) immediately overwrote it via
+  // its own Menu.setApplicationMenu() call. Two near-identical menu templates meant
+  // every future menu change had to be made twice to actually take effect, and it's
+  // easy to update one copy and not notice the other is now stale - removed here;
+  // createApplicationMenu() is the one source of truth. Menu.setApplicationMenu()
+  // applies at the app level, so it still covers any window createWindow() creates,
+  // including a later one from the 'activate' handler.
 
   // Register before loadURL — localhost static server can finish before await returns,
   // so attaching ready-to-show after loadURL misses the event and the window stays hidden.
