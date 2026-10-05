@@ -13644,6 +13644,20 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
   box-sizing: border-box;
 }
 
+/* James: "shipping doesnt collapse. It moves a little but not collapse."
+   The culprit: an explicit display:flex on an element also beats the
+   browser's own default `[hidden] { display: none }` rule, since both are
+   normal-weight author/UA declarations and this element's own display
+   property wins - the toggle (orders-pane.js: panel.hidden = !panel.hidden)
+   really was flipping the hidden attribute correctly the whole time, it
+   just never had any visual effect without this. Re-asserting display:none
+   at a more specific, equal-origin selector (.order-ship-panel[hidden])
+   wins over the plain .order-ship-panel rule above by specificity, which
+   is the standard fix for this well-known gotcha. */
+.order-ship-panel[hidden] {
+  display: none;
+}
+
 .order-ship-toggle + .order-ship-panel:not([hidden]) {
   margin-top: 0;
   border-top: none;
