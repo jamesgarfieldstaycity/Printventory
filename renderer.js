@@ -10518,6 +10518,16 @@ async function createServerMenuBar() {
         }}
       ]
     },
+    {
+      label: 'Shopify',
+      action: async () => {
+        if (typeof window.openShopifySettings === 'function') {
+          await window.openShopifySettings();
+        } else {
+          window.electron.send('open-shopify-settings');
+        }
+      }
+    },
     { label: '---', action: null },
     { label: 'Filament Manager', action: () => {
       if (typeof window.openFilamentManager === 'function') {
