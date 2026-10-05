@@ -1463,6 +1463,7 @@ async function populateVariantAssignments() {
                   data-model-id="${variant.suggestion.file.id}"
                   data-option-value="${escapeHtml(variant.option_value || '')}">Confirm</button>
                 <button type="button" class="variant-action-btn select-file-btn" data-variant-id="${variant.shopify_variant_id}" data-option-value="${escapeHtml(variant.option_value || '')}">Other...</button>
+                <button type="button" class="variant-action-btn open-file-btn" data-file-path="${escapeHtml(variant.suggestion.file.filePath)}" title="Open suggested file before confirming">Open</button>
               </div>
             ` : `
               <span class="no-assignment">No file assigned</span>

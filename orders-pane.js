@@ -85,12 +85,31 @@
   async function ensureModelsFuse() {
     if (modelsFuse) return modelsFuse;
     const models = await ensureModelsCache();
-    modelsFuse = new window.Fuse(models, {
-      keys: ['fileName'],
-      threshold: 0.4,
-      ignoreLocation: true,
-      minMatchCharLength: 1
-    });
+    try {
+      if (typeof window.Fuse !== 'function') throw new Error('window.Fuse is not available');
+      modelsFuse = new window.Fuse(models, {
+        keys: ['fileName'],
+        threshold: 0.4,
+        ignoreLocation: true,
+        minMatchCharLength: 1
+      });
+    } catch (e) {
+      // Belt-and-braces: if Fuse somehow isn't available (or throws), fall
+      // back to a plain case-insensitive substring filter rather than
+      // leaving the dropdown silently empty - James still gets a working
+      // search, just without fuzzy matching.
+      console.error('[OrdersPane] Fuse unavailable, falling back to plain substring search:', e);
+      modelsFuse = {
+        search: (query, opts) => {
+          const q = query.toLowerCase();
+          const limit = opts?.limit ?? models.length;
+          return models
+            .filter((m) => (m.fileName || '').toLowerCase().includes(q))
+            .slice(0, limit)
+            .map((item) => ({ item }));
+        }
+      };
+    }
     return modelsFuse;
   }
 
@@ -284,19 +303,25 @@
       return;
     }
 
-    const fuse = await ensureModelsFuse();
-    const matches = fuse.search(query, { limit: COMBOBOX_RESULT_LIMIT });
+    try {
+      const fuse = await ensureModelsFuse();
+      const matches = fuse.search(query, { limit: COMBOBOX_RESULT_LIMIT });
 
-    if (!matches.length) {
-      resultsEl.innerHTML = '<div class="order-line-combobox-empty">No matching models</div>';
+      if (!matches.length) {
+        resultsEl.innerHTML = '<div class="order-line-combobox-empty">No matching models</div>';
+        resultsEl.hidden = false;
+        return;
+      }
+
+      resultsEl.innerHTML = matches.map((m) =>
+        `<div class="order-line-combobox-item" data-model-id="${m.item.id}">${escapeHtml(m.item.fileName)}</div>`
+      ).join('');
       resultsEl.hidden = false;
-      return;
+    } catch (e) {
+      console.error('[OrdersPane] Model search failed:', e);
+      resultsEl.innerHTML = '<div class="order-line-combobox-empty">Search failed - see console</div>';
+      resultsEl.hidden = false;
     }
-
-    resultsEl.innerHTML = matches.map((m) =>
-      `<div class="order-line-combobox-item" data-model-id="${m.item.id}">${escapeHtml(m.item.fileName)}</div>`
-    ).join('');
-    resultsEl.hidden = false;
   }
 
   function moveComboboxHighlight(container, direction) {
