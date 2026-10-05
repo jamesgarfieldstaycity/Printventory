@@ -208,6 +208,11 @@
       "extension-inbox.js",
       "mcp-server.js",
       "installer.nsh",
+      "shopify.js",
+      "pane-controller.js",
+      "filters-pane.js",
+      "orders-pane.js",
+      "toolbar-sync.js",
       "node_modules/node-stream-zip/**/*"
     ],
     "directories": {
