@@ -8830,6 +8830,13 @@ ipcHandlerRegistry.set('mark-order-line-item-printed', markOrderLineItemPrintedH
  * just retry - nothing is recorded locally until Shopify confirms it.
  */
 async function shipShopifyOrderHandler(event, { orderId, carrier, trackingNumber, trackingUrl } = {}) {
+  const logAttempt = db.prepare(`
+    INSERT INTO shopify_fulfillment_log
+      (order_id, carrier_sent, tracking_number_sent, tracking_url_sent, success,
+       shopify_fulfillment_gid, confirmed_carrier, confirmed_number, confirmed_url, error_message)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
   try {
     const order = db.prepare('SELECT id, shopify_order_gid, local_status FROM shopify_orders WHERE id = ?').get(orderId);
     if (!order) return { error: 'Order not found' };
@@ -8841,18 +8848,44 @@ async function shipShopifyOrderHandler(event, { orderId, carrier, trackingNumber
       return { error: 'Shopify credentials not configured' };
     }
 
-    const fulfillmentOrderId = await shopifyApi.fetchFulfillmentOrderForOrder(
-      settings.storeDomain, settings.clientId, settings.clientSecret, order.shopify_order_gid
-    );
-    await shopifyApi.createFulfillment(
-      settings.storeDomain, settings.clientId, settings.clientSecret,
-      {
-        fulfillmentOrderId,
-        trackingNumber,
-        trackingCompany: carrier || null,
-        trackingUrl: trackingUrl || null,
-        notifyCustomer: true
-      }
+    let fulfillment;
+    try {
+      const fulfillmentOrderId = await shopifyApi.fetchFulfillmentOrderForOrder(
+        settings.storeDomain, settings.clientId, settings.clientSecret, order.shopify_order_gid
+      );
+      fulfillment = await shopifyApi.createFulfillment(
+        settings.storeDomain, settings.clientId, settings.clientSecret,
+        {
+          fulfillmentOrderId,
+          trackingNumber,
+          trackingCompany: carrier || null,
+          trackingUrl: trackingUrl || null,
+          notifyCustomer: true
+        }
+      );
+    } catch (apiError) {
+      // Logged even on failure, so a silent/rejected push is never invisible -
+      // see GR-PLAN-006 "Fulfillment audit trail" decision (confirmed vs. sent
+      // tracking info, for the Etsy-reserve question).
+      logAttempt.run(
+        orderId, carrier || null, trackingNumber, trackingUrl || null, 0,
+        null, null, null, null, apiError.message || String(apiError)
+      );
+      throw apiError;
+    }
+
+    // Use Shopify's own CONFIRMED trackingInfo from the mutation response,
+    // not the raw values we sent - if Shopify silently dropped or altered
+    // part of what we asked for, the local record should reflect what
+    // actually happened, not what we requested.
+    const confirmedTracking = (fulfillment && fulfillment.trackingInfo && fulfillment.trackingInfo[0]) || {};
+    const confirmedCarrier = confirmedTracking.company || null;
+    const confirmedNumber = confirmedTracking.number || null;
+    const confirmedUrl = confirmedTracking.url || null;
+
+    logAttempt.run(
+      orderId, carrier || null, trackingNumber, trackingUrl || null, 1,
+      (fulfillment && fulfillment.id) || null, confirmedCarrier, confirmedNumber, confirmedUrl, null
     );
 
     db.prepare(`
@@ -8860,7 +8893,7 @@ async function shipShopifyOrderHandler(event, { orderId, carrier, trackingNumber
       SET local_status = 'shipped', tracking_carrier = ?, tracking_number = ?, tracking_url = ?,
           fulfilled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(carrier || null, trackingNumber, trackingUrl || null, orderId);
+    `).run(confirmedCarrier || carrier || null, confirmedNumber || trackingNumber, confirmedUrl || trackingUrl || null, orderId);
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('shopify-orders-synced', {
@@ -18112,11 +18145,37 @@ function ensureShopifyTablesExist() {
       }
     }
 
+    // GR-PLAN-006: James - "is it logged correctly? ... its critical it
+    // works as etsy requires tracking info in order to release its
+    // reserve." Before this, the only record of a fulfillment push was a
+    // console.log in shopify.js's createFulfillment() - invisible in a
+    // packaged build (main-process console.log has nowhere to go once
+    // there's no terminal attached), and even in dev mode it only showed
+    // what WE sent, never what Shopify actually confirmed back. This table
+    // is a permanent, queryable audit trail for every push attempt
+    // (success or failure), independent of any log file or dev console.
+    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_fulfillment_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER NOT NULL,
+        attempted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        carrier_sent TEXT,
+        tracking_number_sent TEXT,
+        tracking_url_sent TEXT,
+        success INTEGER NOT NULL,
+        shopify_fulfillment_gid TEXT,
+        confirmed_carrier TEXT,
+        confirmed_number TEXT,
+        confirmed_url TEXT,
+        error_message TEXT,
+        FOREIGN KEY(order_id) REFERENCES shopify_orders(id) ON DELETE CASCADE
+    )`).run();
+
     db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_orders_gid ON shopify_orders(shopify_order_gid)').run();
     db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_orders_local_status ON shopify_orders(local_status)').run();
     db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_order_line_items_order_id ON shopify_order_line_items(order_id)').run();
     db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_order_line_items_sku ON shopify_order_line_items(sku)').run();
     db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_order_line_items_link_status ON shopify_order_line_items(link_status)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_fulfillment_log_order_id ON shopify_fulfillment_log(order_id)').run();
 
     console.log('Shopify tables ensured');
     return true;
