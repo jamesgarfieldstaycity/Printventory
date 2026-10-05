@@ -45,6 +45,7 @@
     "test:notes": "node notes-markdown.test.js",
     "test:support-logs": "node support-logs.test.js",
     "test:full": "playwright test full-app-e2e.spec.js",
+    "test:server-guardrails": "playwright test tests/server-mode-",
     "test:dedup-stress": "node tests/dedup-stress-test.js"
   },
   "author": "TechJeeper Designs",
@@ -191,6 +192,7 @@
       "sidebar-layout.js",
       "folder-tree.js",
       "folder-tree-lib.js",
+      "core/**/*",
       "scan-worker.js",
       "scan-skip.js",
       "slicer-launch.js",

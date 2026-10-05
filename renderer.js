@@ -11355,6 +11355,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     settingsDialog.showModal();
   });
 
+  // Server-mode error alert: main.js can't use a native dialog in server mode
+  // (nothing is there to click it), so it broadcasts 'server-alert' instead -
+  // show it as a dismissible toast so failures (e.g. a scan that errors out)
+  // are actually visible in the browser instead of just silently stopping.
+  if (typeof window.electron.onServerAlert === 'function') {
+    window.electron.onServerAlert((payload) => {
+      const toast = document.getElementById('server-alert-toast');
+      if (!toast) return;
+      const prefix = payload?.title ? `${payload.title}: ` : '';
+      toast.textContent = `${prefix}${payload?.message || 'Something went wrong.'}`;
+      toast.classList.add('visible');
+      toast.onclick = () => toast.classList.remove('visible');
+      clearTimeout(window._serverAlertToastTimeout);
+      window._serverAlertToastTimeout = setTimeout(() => toast.classList.remove('visible'), 8000);
+    });
+  }
+
   document.getElementById('cancel-settings')?.addEventListener('click', () => {
     settingsDialog.close();
   });
@@ -12043,7 +12060,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         await populateTagFilter();
         await populateLicenseFilter();
       } catch (error) {
+        // Previously console-only: a scan failure here had no user-facing
+        // surface at all (no dialog, no toast), which is why a failed scan
+        // on a library folder "flashed the components then stopped" with
+        // nothing visible to explain why. window.electron.showMessage() is
+        // safe to call here in both desktop and server mode (server mode
+        // renders an in-page dialog via showBrowserMessage() in
+        // server-bridge.js rather than a native dialog).
         console.error('Error scanning library folders:', error);
+        if (window.electron?.showMessage) {
+          window.electron.showMessage('Scan Error', 'Failed to scan library folder(s): ' + (error && error.message ? error.message : String(error))).catch(() => {});
+        }
       } finally {
         scanButton.disabled = false;
         scanButton.style.opacity = '1';
@@ -12159,9 +12186,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         await updateModelCounts(allModels.length);
       }
 
-    } catch (error) {
-      console.error('Error scanning directory:', error);
-      await window.electron.showMessage('Error', 'Failed to scan directory');
+  } catch (error) {
+    console.error('Error scanning directory:', error);
+    await window.electron.showMessage('Error', 'Failed to scan directory');
     } finally {
       hideProgressBars();
       // Re-enable the button
@@ -19511,13 +19538,24 @@ async function scanAndRenderDirectory(directoryPath, background = false, isStlHo
       }
     }
   } catch (error) {
+    // This catch previously only set hidden progress-bar text and, for the
+    // single case of a UNC-path validation error, called window.alert() --
+    // every other scan failure (missing folder, permission denied, a scan
+    // worker error, etc.) had NO visible surface at all: the progress
+    // section is unconditionally hidden again in the finally{} block below
+    // before anyone could see the error text that was just set. This is the
+    // real cause of a failed scan "flashing the components then stopping"
+    // with nothing visible to explain why. window.electron.showMessage()
+    // now surfaces every scan error as a dialog (a native dialog on
+    // desktop, an in-page dialog via showBrowserMessage() in server mode --
+    // both already proven to work, unlike a bare alert() which a headless
+    // or unfocused browser tab can swallow silently).
     console.error('Error scanning directory:', error);
     window._scanThumbnailProgress = null;
     if (!background) {
       renderProgressText.textContent = `Error: ${error.message}`;
-      // Show alert for UNC path validation errors
-      if (error.message && error.message.includes('UNC path')) {
-        alert(`Error: ${error.message}\n\nIn server mode, all file paths must be UNC paths (e.g., \\\\server\\share\\path\\to\\file.stl)`);
+      if (window.electron?.showMessage) {
+        window.electron.showMessage('Scan Error', error.message || 'Failed to scan directory').catch(() => {});
       }
     }
   } finally {

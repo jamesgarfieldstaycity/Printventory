@@ -12,6 +12,7 @@ const spoolman = require('./spoolman');
 const printEvents = require('./print-events');
 const printerManager = require('./printer-manager');
 const { buildFolderForest } = require('./folder-tree-lib');
+const { ensureShopifyTablesExist } = require('./core/schema');
 const {
   registerMcpRoutes,
   buildMcpClientConfig,
@@ -366,6 +367,104 @@ let contextMenuRequestIdCounter = 0;
 // Handler registry for WebSocket IPC calls in server mode
 // This allows us to directly invoke handlers without going through the renderer
 const ipcHandlerRegistry = new Map();
+
+// ---------------------------------------------------------------------------
+// Server-mode-safe dialog wrappers.
+//
+// Every native dialog.* call attaches to a BrowserWindow. In server mode that
+// window is the hidden, 1x1px, show:false window used to run main-process
+// logic headlessly -- nothing can click a dialog attached to it, so an
+// unguarded dialog.showMessageBox()/showOpenDialog()/showSaveDialog() call
+// hangs forever, and any awaiting code (including finally/cleanup blocks)
+// never resumes. This is what caused a failed directory scan to "flash the
+// components then stop" with no visible error: the scan's own error handler
+// tried to show a message and silently hung.
+//
+// These wrappers are drop-in replacements for dialog.showMessageBox /
+// showOpenDialog / showSaveDialog / showErrorBox (same call shapes, same
+// return shapes) that, in server mode, never touch the native dialog API at
+// all: they log, broadcast a 'server-alert' event over the existing
+// WebSocket channel (already wired up in preload.js / server-bridge.js /
+// renderer.js / index.html / styles.css), and resolve immediately with a
+// reasonable default result. In desktop mode they are exactly the original
+// dialog.* calls, unchanged.
+function safeShowMessageBox(winOrOptions, maybeOptions) {
+  let win, options;
+  if (maybeOptions === undefined) {
+    options = winOrOptions;
+    win = undefined;
+  } else {
+    win = winOrOptions;
+    options = maybeOptions;
+  }
+  if (isServerMode) {
+    const title = (options && options.title) || '';
+    const message = (options && options.message) || '';
+    const buttons = (options && options.buttons && options.buttons.length) ? options.buttons : ['OK'];
+    console.log(`[dialog] (server mode) ${title}: ${message}`);
+    if (global.broadcastEvent) {
+      global.broadcastEvent('server-alert', { title, message, buttons });
+    }
+    return Promise.resolve({ response: 0, checkboxChecked: false });
+  }
+  return dialog.showMessageBox(win, options);
+}
+
+function safeShowErrorBox(title, content) {
+  if (isServerMode) {
+    console.log(`[dialog] (server mode) ${title}: ${content}`);
+    if (global.broadcastEvent) {
+      global.broadcastEvent('server-alert', { title, message: content, buttons: ['OK'] });
+    }
+    return;
+  }
+  return dialog.showErrorBox(title, content);
+}
+
+function safeShowOpenDialog(winOrOptions, maybeOptions) {
+  let win, options;
+  if (maybeOptions === undefined) {
+    options = winOrOptions;
+    win = undefined;
+  } else {
+    win = winOrOptions;
+    options = maybeOptions;
+  }
+  if (isServerMode) {
+    // Native file/folder pickers cannot work at all against a remote browser
+    // client in server mode -- there is no local filesystem dialog to show.
+    // Surface this plainly instead of hanging or silently doing nothing.
+    const message = 'A file/folder picker was requested, but native pickers are not available in server mode. Use a UNC or mapped path instead.';
+    console.log(`[dialog] (server mode) Open dialog suppressed: ${message}`);
+    if (global.broadcastEvent) {
+      global.broadcastEvent('server-alert', { title: 'Not available in server mode', message, buttons: ['OK'] });
+    }
+    return Promise.resolve({ canceled: true, filePaths: [] });
+  }
+  return dialog.showOpenDialog(win, options);
+}
+
+function safeShowSaveDialog(winOrOptions, maybeOptions) {
+  let win, options;
+  if (maybeOptions === undefined) {
+    options = winOrOptions;
+    win = undefined;
+  } else {
+    win = winOrOptions;
+    options = maybeOptions;
+  }
+  if (isServerMode) {
+    const message = 'A save dialog was requested, but native save dialogs are not available in server mode.';
+    console.log(`[dialog] (server mode) Save dialog suppressed: ${message}`);
+    if (global.broadcastEvent) {
+      global.broadcastEvent('server-alert', { title: 'Not available in server mode', message, buttons: ['OK'] });
+    }
+    return Promise.resolve({ canceled: true, filePath: undefined });
+  }
+  return dialog.showSaveDialog(win, options);
+}
+// ---------------------------------------------------------------------------
+
 
 // Auto-register every ipcMain.handle into the WebSocket registry.
 // Without this, Docker/server-mode falls back to executeJavaScript on the hidden
@@ -3143,7 +3242,7 @@ if (!gotTheLock) {
         if (isServerMode) {
           console.error('Database Error: Failed to initialize database. The application will now quit.');
         } else {
-          dialog.showErrorBox('Database Error', 'Failed to initialize database. The application will now quit.');
+          safeShowErrorBox('Database Error', 'Failed to initialize database. The application will now quit.');
         }
         app.quit();
         return;
@@ -3224,7 +3323,7 @@ if (!gotTheLock) {
             console.error('[Local HTTP] Failed to start server at startup:', err.message);
             console.error('[Local HTTP] Run from Terminal to see this, or check entitlements (com.apple.security.network.server) and rebuild.');
             if (dialog && dialog.showErrorBox) {
-              dialog.showErrorBox('Local HTTP Server', `Could not start server on port ${extPort}: ${err.message}\n\nOn macOS, the app needs the "Allow incoming network connections" entitlement. Rebuild the app after adding com.apple.security.network.server to build/entitlements.mac.plist.`);
+              safeShowErrorBox('Local HTTP Server', `Could not start server on port ${extPort}: ${err.message}\n\nOn macOS, the app needs the "Allow incoming network connections" entitlement. Rebuild the app after adding com.apple.security.network.server to build/entitlements.mac.plist.`);
             }
           });
         }
@@ -3273,7 +3372,7 @@ if (!gotTheLock) {
       if (isServerMode) {
         console.error('Startup Error: Failed to start application properly.');
       } else {
-        dialog.showErrorBox('Startup Error', 'Failed to start application properly.');
+        safeShowErrorBox('Startup Error', 'Failed to start application properly.');
       }
       app.quit();
     }
@@ -3477,7 +3576,7 @@ function initializeDatabase() {
     ensureSlicersTableExists();
     ensureFilamentsTablesExist();
     ensurePartsTablesExist();
-    ensureShopifyTablesExist();
+    ensureShopifyTablesExist(db);
 
     // Initialize default settings
     initializeDefaultSettings();
@@ -3487,7 +3586,7 @@ function initializeDatabase() {
     return true;
   } catch (err) {
     console.error('Error initializing database:', err);
-    dialog.showErrorBox('Database Error', 
+    safeShowErrorBox('Database Error', 
       `Failed to initialize database: ${err.message}\n\nPath: ${getDatabasePath()}\n\nPlease ensure the application has write permissions to its directory.`
     );
     return false;
@@ -4537,7 +4636,7 @@ ipcMain.handle('open-file-dialog', async (event, defaultPath) => {
     dialogOptions.defaultPath = startPath;
   }
 
-  const result = await dialog.showOpenDialog(mainWindow, dialogOptions);
+  const result = await safeShowOpenDialog(mainWindow, dialogOptions);
   if (result.canceled) {
     return null;
   } else {
@@ -4830,7 +4929,7 @@ async function removeNonExistentFiles(scanDirectoryPath, window = null, excludeD
         } else if (skippedCount && missingCount) {
           removalMessage = `The scan found ${missingCount} missing file${missingCount === 1 ? '' : 's'} and ${skippedCount} file${skippedCount === 1 ? '' : 's'} in hidden or excluded folders.`;
         }
-        const result = await dialog.showMessageBox(dialogWindow || undefined, {
+        const result = await safeShowMessageBox(dialogWindow || undefined, {
           type: 'warning',
           title: 'Confirm File Removal',
           message: removalMessage,
@@ -5359,7 +5458,7 @@ ipcMain.handle('show-message-box', async (event, options) => {
       return { response: 1 };
     }
     const window = BrowserWindow.fromWebContents(event.sender);
-    const result = await dialog.showMessageBox(window || undefined, options);
+    const result = await safeShowMessageBox(window || undefined, options);
     return result;
   } catch (error) {
     console.error('Error showing message box:', error);
@@ -7753,7 +7852,7 @@ async function showPhotoContextMenuHandler(event, payload) {
 
   // For Shopify images, just show a message - can't set as thumbnail
   if (isShopifyImage) {
-    dialog.showMessageBox({
+    safeShowMessageBox({
       type: 'info',
       title: 'Cannot Set Thumbnail',
       message: 'Shopify images cannot be set as thumbnail. Add a local file first.'
@@ -7834,7 +7933,7 @@ async function browseForImagesHandler(event, defaultPath) {
       dialogOptions.defaultPath = defaultPath;
     }
 
-    const result = await dialog.showOpenDialog(mainWindow, dialogOptions);
+    const result = await safeShowOpenDialog(mainWindow, dialogOptions);
 
     if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
       return [];
@@ -10203,6 +10302,19 @@ ipcMain.handle('open-path', async (event, path) => {
 });
 
 ipcMain.handle('show-message', async (event, title, message, buttons = ['OK']) => {
+  if (isServerMode) {
+    // safeShowMessageBox() would attach to the hidden (show:false) server-mode
+    // window and await a click nobody can make, hanging this handler forever. Since
+    // renderer.js awaits showMessage() inside scan-error (and similar) catch blocks,
+    // that hang also prevents the matching finally{} from ever running - UI stays
+    // stuck mid-update with no visible error ("flashes the components then stops").
+    // Log it and broadcast to connected browser clients instead of blocking.
+    console.log(`[show-message] (server mode) ${title}: ${message}`);
+    if (global.broadcastEvent) {
+      global.broadcastEvent('server-alert', { title, message, buttons });
+    }
+    return buttons[0];
+  }
   let parent = null;
   try {
     parent = event && event.sender ? BrowserWindow.fromWebContents(event.sender) : null;
@@ -10219,7 +10331,7 @@ ipcMain.handle('show-message', async (event, title, message, buttons = ['OK']) =
     parent.show();
     parent.focus();
   }
-  const result = await dialog.showMessageBox(parent || undefined, {
+  const result = await safeShowMessageBox(parent || undefined, {
     type: 'info',
     title: title,
     message: message,
@@ -10426,7 +10538,7 @@ ipcMain.handle('backup-database', async () => {
     }
   }
 
-  const result = await dialog.showSaveDialog(mainWindow, {
+  const result = await safeShowSaveDialog(mainWindow, {
     title: 'Save Database Backup',
     defaultPath: 'printventory-backup.db',
     filters: [
@@ -10504,7 +10616,7 @@ ipcMain.handle('restore-database', async (event, payload = null) => {
     }
   }
 
-  const result = await dialog.showOpenDialog(mainWindow, {
+  const result = await safeShowOpenDialog(mainWindow, {
     title: 'Restore Database from Backup',
     filters: [
       { name: 'Database Files', extensions: ['db'] }
@@ -10613,7 +10725,7 @@ ipcMain.handle('export-library', async () => {
     }
   }
 
-  const result = await dialog.showSaveDialog(mainWindow, {
+  const result = await safeShowSaveDialog(mainWindow, {
     title: 'Export Library',
     defaultPath: 'printventory-library.json',
     filters: [
@@ -10734,7 +10846,7 @@ ipcMain.handle('import-library', async (event, payload = null) => {
     }
   }
 
-  const result = await dialog.showOpenDialog(mainWindow, {
+  const result = await safeShowOpenDialog(mainWindow, {
     title: 'Import Library',
     filters: [
       { name: 'JSON Files', extensions: ['json'] }
@@ -11399,7 +11511,7 @@ const purgeModelsHandler = async (event, options = {}) => {
     let doPurge = fromWebSocket || confirmedInDialog;
 
     if (!doPurge) {
-      const result = await dialog.showMessageBox({
+      const result = await safeShowMessageBox({
         type: 'warning',
         title: 'Purge Models',
         message: 'Are you sure you want to purge all models?',
@@ -11541,7 +11653,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
           if (event && event.sender) {
             const win = BrowserWindow.fromWebContents(event.sender);
             if (win) {
-              dialog.showMessageBox(win, {
+              safeShowMessageBox(win, {
                 type: 'error',
                 title: 'Error',
                 message: 'Could not preview file',
@@ -11574,7 +11686,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
           if (event && event.sender) {
             const win = BrowserWindow.fromWebContents(event.sender);
             if (win) {
-              dialog.showMessageBox(win, {
+              safeShowMessageBox(win, {
                 type: 'error',
                 title: 'Error',
                 message: 'Could not preview bundle',
@@ -11609,7 +11721,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
           console.error('Error triggering download:', error);
           const win = BrowserWindow.fromWebContents(event.sender);
           if (win) {
-            dialog.showMessageBox(win, {
+            safeShowMessageBox(win, {
               type: 'error',
               title: 'Error',
               message: 'Could not download file',
@@ -11642,7 +11754,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
           console.error('Error opening file:', error);
           const win = getWindowFromEvent(event);
           if (win && !win.isDestroyed()) {
-            dialog.showMessageBox(win, {
+            safeShowMessageBox(win, {
               type: 'error',
               title: 'Error',
               message: 'Could not open file',
@@ -11669,7 +11781,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
           }
         } catch (error) {
           console.error('Error opening directory:', error);
-          dialog.showMessageBox({
+          safeShowMessageBox({
             type: 'error',
             title: 'Error',
             message: 'Could not open directory',
@@ -11688,14 +11800,14 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
         label: 'Extract Model',
         click: async () => {
           try {
-            const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
+            const result = await safeShowOpenDialog(BrowserWindow.fromWebContents(event.sender), {
               properties: ['openDirectory'],
               title: 'Select destination folder for extraction'
             });
             
             if (!result.canceled && result.filePaths.length > 0) {
               const destPath = await extractModelFromZip(pathInfo.zipPath, pathInfo.entryPath, result.filePaths[0]);
-              dialog.showMessageBox(BrowserWindow.fromWebContents(event.sender), {
+              safeShowMessageBox(BrowserWindow.fromWebContents(event.sender), {
                 type: 'info',
                 title: 'Extraction Complete',
                 message: 'Model extracted successfully',
@@ -11704,7 +11816,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
             }
           } catch (error) {
             console.error('Error extracting model:', error);
-            dialog.showMessageBox(BrowserWindow.fromWebContents(event.sender), {
+            safeShowMessageBox(BrowserWindow.fromWebContents(event.sender), {
               type: 'error',
               title: 'Error',
               message: 'Could not extract model',
@@ -11717,14 +11829,14 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
         label: 'Extract Zip Archive',
         click: async () => {
           try {
-            const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
+            const result = await safeShowOpenDialog(BrowserWindow.fromWebContents(event.sender), {
               properties: ['openDirectory'],
               title: 'Select destination folder for extraction'
             });
             
             if (!result.canceled && result.filePaths.length > 0) {
               const destPath = await extractModelFromZip(pathInfo.zipPath, pathInfo.entryPath, result.filePaths[0]);
-              dialog.showMessageBox(BrowserWindow.fromWebContents(event.sender), {
+              safeShowMessageBox(BrowserWindow.fromWebContents(event.sender), {
                 type: 'info',
                 title: 'Extraction Complete',
                 message: 'Archive extracted successfully',
@@ -11733,7 +11845,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
             }
           } catch (error) {
             console.error('Error extracting archive:', error);
-            dialog.showMessageBox(BrowserWindow.fromWebContents(event.sender), {
+            safeShowMessageBox(BrowserWindow.fromWebContents(event.sender), {
               type: 'error',
               title: 'Error',
               message: 'Could not extract archive',
@@ -11809,7 +11921,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
                   `If you need to use a Windows slicer, you must run Printventory in normal mode (not Docker/Server mode).`;
                 
                 if (win && !win.isDestroyed()) {
-                  dialog.showMessageBox(win, {
+                  safeShowMessageBox(win, {
                     type: 'warning',
                     title: 'Slicer Path Not Compatible',
                     message: 'Cannot execute Windows executable in Docker container',
@@ -11849,7 +11961,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
             if (error && error.code === 'INVALID_SLICER') {
               presentInvalidSlicer(win, error);
             } else if (win && !win.isDestroyed()) {
-              dialog.showMessageBox(win, {
+              safeShowMessageBox(win, {
                 type: 'error',
                 title: 'Error',
                 message: 'Could not slice model',
@@ -11873,7 +11985,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
       const configuredLevels = clampFolderLevels(getSettings().aiTagFolderLevels);
       const levels = configuredLevels > 0 ? configuredLevels : 1;
       if (win && !win.isDestroyed() && !isServerMode) {
-        const confirm = await dialog.showMessageBox(win, {
+        const confirm = await safeShowMessageBox(win, {
           type: 'question',
           title: 'Tag from Folder',
           message: `Add folder names as tags for ${filePaths.length} model${filePaths.length === 1 ? '' : 's'}?`,
@@ -11895,7 +12007,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
           ? `Added ${result.tagsAdded} tag${result.tagsAdded === 1 ? '' : 's'} on ${result.updated} model${result.updated === 1 ? '' : 's'}.`
           : 'No new folder tags were added. Those tags may already be on the models, or the files have no usable parent folder.';
         if (win && !win.isDestroyed() && !isServerMode) {
-          await dialog.showMessageBox(win, {
+          await safeShowMessageBox(win, {
             type: 'info',
             title: 'Tag from Folder',
             message: summary
@@ -11906,7 +12018,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
       } catch (error) {
         console.error('Error tagging from folder:', error);
         if (win && !win.isDestroyed() && !isServerMode) {
-          await dialog.showMessageBox(win, {
+          await safeShowMessageBox(win, {
             type: 'error',
             title: 'Tag from Folder',
             message: 'Could not add folder tags',
@@ -12292,7 +12404,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
             win.show();
             win.focus();
           }
-          dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, {
+          safeShowMessageBox(win && !win.isDestroyed() ? win : undefined, {
             type: 'error',
             title: errorMessage,
             message: errorDetail,
@@ -12363,7 +12475,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
               ? `This will overwrite existing metadata for:\n\n${modelsWithData[0].fileName}\n\nExisting data:\n${modelsWithData[0].designer ? `Designer: ${modelsWithData[0].designer}\n` : ''}${modelsWithData[0].parentModel ? `Parent Model: ${modelsWithData[0].parentModel}\n` : ''}${modelsWithData[0].notes ? `Notes: ${modelsWithData[0].notes.substring(0, 50)}${modelsWithData[0].notes.length > 50 ? '...' : ''}\n` : ''}${modelsWithData[0].license ? `License: ${modelsWithData[0].license}\n` : ''}\n\nContinue?`
               : `This will overwrite existing metadata for ${modelsWithData.length} model(s).\n\nContinue?`;
             
-            const confirm = await dialog.showMessageBox(win, {
+            const confirm = await safeShowMessageBox(win, {
               type: 'warning',
               title: 'Confirm Metadata Overwrite',
               message: message,
@@ -12474,7 +12586,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
             message = 'No files processed.';
           }
           
-          await dialog.showMessageBox(win, {
+          await safeShowMessageBox(win, {
             type: 'info',
             title: 'Metadata Pull Complete',
             message: message
@@ -12482,7 +12594,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
         } catch (error) {
           console.error('Error pulling metadata:', error);
           const win = BrowserWindow.fromWebContents(event.sender);
-          await dialog.showMessageBox(win, {
+          await safeShowMessageBox(win, {
             type: 'error',
             title: 'Error',
             message: 'Could not pull metadata',
@@ -12509,7 +12621,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
           } else {
             // Normal mode: use native file dialog
             const win = BrowserWindow.fromWebContents(event.sender);
-            const result = await dialog.showOpenDialog(win, {
+            const result = await safeShowOpenDialog(win, {
               title: 'Select Image File',
               properties: ['openFile'],
               filters: [
@@ -12554,7 +12666,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
           console.error('Error adding image:', error);
           const win = BrowserWindow.fromWebContents(event.sender);
           if (win) {
-            dialog.showMessageBox(win, {
+            safeShowMessageBox(win, {
               type: 'error',
               title: 'Error',
               message: 'Could not add image',
@@ -12581,7 +12693,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
         if (thumbnails.length === 0) {
           const win = BrowserWindow.fromWebContents(event.sender);
           if (win) {
-            await dialog.showMessageBox(win, {
+            await safeShowMessageBox(win, {
               type: 'info',
               title: 'No Thumbnails',
               message: 'This model has no thumbnails to manage.',
@@ -12601,7 +12713,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
         console.error('Error opening manage thumbnails:', error);
         const win = BrowserWindow.fromWebContents(event.sender);
         if (win) {
-          dialog.showMessageBox(win, {
+          safeShowMessageBox(win, {
             type: 'error',
             title: 'Error',
             message: 'Could not open thumbnail manager',
@@ -12623,7 +12735,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
       click: async () => {
         try {
           const win = getWindowFromEvent(event);
-          const result = await dialog.showOpenDialog(win, {
+          const result = await safeShowOpenDialog(win, {
             title: 'Select Image for Thumbnail',
             defaultPath: modelFolder,
             properties: ['openFile'],
@@ -12648,7 +12760,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
           console.error('Error setting thumbnail from folder:', error);
           const win = getWindowFromEvent(event);
           if (win && !win.isDestroyed()) {
-            dialog.showMessageBox(win, {
+            safeShowMessageBox(win, {
               type: 'error',
               title: 'Error',
               message: 'Could not set thumbnail',
@@ -12709,7 +12821,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
           console.error('Error clearing parent model:', error);
           const win = getWindowFromEvent(event);
           if (win && !win.isDestroyed() && !isServerMode) {
-            dialog.showMessageBox(win, {
+            safeShowMessageBox(win, {
               type: 'error',
               title: 'Error',
               message: 'Could not clear parent model',
@@ -12734,7 +12846,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
       label: 'Move',
       click: async () => {
         const win = BrowserWindow.fromWebContents(event.sender);
-        const result = await dialog.showOpenDialog(win, {
+        const result = await safeShowOpenDialog(win, {
           title: 'Select Destination Folder',
           properties: ['openDirectory']
         });
@@ -12746,7 +12858,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
               await fs.promises.rename(fp, newDestination);
               db.prepare('UPDATE models SET filePath = ? WHERE filePath = ?').run(newDestination, fp);
             } catch (error) {
-              await dialog.showMessageBox(win, {
+              await safeShowMessageBox(win, {
                 type: 'error',
                 title: 'Error Moving File',
                 message: `Failed to move file ${fp}: ${error.message}`
@@ -12770,7 +12882,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
           const maxFilesToShow = 20;
           const fileList = filePaths.slice(0, maxFilesToShow).map(fp => path.basename(fp)).join('\n');
           const moreFiles = filePaths.length > maxFilesToShow ? `\n... and ${filePaths.length - maxFilesToShow} more file${filePaths.length - maxFilesToShow === 1 ? '' : 's'}` : '';
-          const confirm = await dialog.showMessageBox({
+          const confirm = await safeShowMessageBox({
             type: 'warning',
             title: 'Confirm Remove',
             message: `Are you sure you want to remove ${filePaths.length} file${filePaths.length === 1 ? '' : 's'} from the library?\nFiles will remain on disk but will be removed from Printventory.\n\nFiles:\n${fileList}${moreFiles}`,
@@ -12799,7 +12911,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
           } catch (error) {
             console.error('Error removing from library:', error);
             if (!isServerMode) {
-              await dialog.showMessageBox({
+              await safeShowMessageBox({
                 type: 'error',
                 title: 'Error',
                 message: `An error occurred while removing from library: ${error.message}`
@@ -12818,7 +12930,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
           const maxFilesToShow = 20;
           const fileList = filePaths.slice(0, maxFilesToShow).map(fp => path.basename(fp)).join('\n');
           const moreFiles = filePaths.length > maxFilesToShow ? `\n... and ${filePaths.length - maxFilesToShow} more file${filePaths.length - maxFilesToShow === 1 ? '' : 's'}` : '';
-          const confirm = await dialog.showMessageBox({
+          const confirm = await safeShowMessageBox({
             type: 'warning',
             title: 'Confirm Delete',
             message: `Are you sure you want to DELETE ${filePaths.length} file${filePaths.length === 1 ? '' : 's'} from disk?\nThis will permanently delete the files and cannot be undone!\n\nFiles:\n${fileList}${moreFiles}`,
@@ -12833,7 +12945,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
             try {
               const success = await deleteFile(fp);
               if (!success && !isServerMode) {
-                await dialog.showMessageBox({
+                await safeShowMessageBox({
                   type: 'error',
                   title: 'Error',
                   message: `Failed to delete file: ${fp}`
@@ -12842,7 +12954,7 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
             } catch (error) {
               console.error('Error deleting file:', error);
               if (!isServerMode) {
-                await dialog.showMessageBox({
+                await safeShowMessageBox({
                   type: 'error',
                   title: 'Error',
                   message: `An error occurred: ${error.message}`
@@ -13714,10 +13826,10 @@ function presentInvalidSlicer(win, error) {
     detail: error.message
   };
   if (win && !win.isDestroyed()) {
-    dialog.showMessageBox(win, options);
+    safeShowMessageBox(win, options);
     return;
   }
-  dialog.showMessageBox(options);
+  safeShowMessageBox(options);
 }
 
 function runSlicerWithModelPaths(slicer, modelPaths) {
@@ -14843,7 +14955,7 @@ ipcMain.handle('pull-3mf-metadata', async (event, filePaths) => {
         ? `This will overwrite existing metadata for:\n\n${modelsWithData[0].fileName}\n\nExisting data:\n${modelsWithData[0].designer ? `Designer: ${modelsWithData[0].designer}\n` : ''}${modelsWithData[0].parentModel ? `Parent Model: ${modelsWithData[0].parentModel}\n` : ''}${modelsWithData[0].notes ? `Notes: ${modelsWithData[0].notes.substring(0, 50)}${modelsWithData[0].notes.length > 50 ? '...' : ''}\n` : ''}${modelsWithData[0].license ? `License: ${modelsWithData[0].license}\n` : ''}\n\nContinue?`
         : `This will overwrite existing metadata for ${modelsWithData.length} model(s).\n\nContinue?`;
       
-      const confirm = await dialog.showMessageBox(win, {
+      const confirm = await safeShowMessageBox(win, {
         type: 'warning',
         title: 'Confirm Metadata Overwrite',
         message: message,
@@ -15658,7 +15770,7 @@ ipcMain.handle('open-update-page', async (event, isBeta) => {
 // Add new IPC handler for opening folder dialog
 ipcMain.handle('open-folder-dialog', async (event, title) => {
   const win = BrowserWindow.fromWebContents(event.sender);
-  const result = await dialog.showOpenDialog(win, {
+  const result = await safeShowOpenDialog(win, {
     title: title || 'Select Directory',
     properties: ['openDirectory']
   });
@@ -15771,14 +15883,14 @@ ipcMain.handle('getTotalModelCount', async () => {
 ipcMain.handle('open-slicer-dialog', async (event, title) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (process.platform === 'win32') {
-    const result = await dialog.showOpenDialog(win, {
+    const result = await safeShowOpenDialog(win, {
       title: title || 'Select Slicer Executable',
       filters: [{ name: 'Executable', extensions: ['exe'] }],
       properties: ['openFile']
     });
     return result;
   } else if (process.platform === 'darwin') {
-    const result = await dialog.showOpenDialog(win, {
+    const result = await safeShowOpenDialog(win, {
       title: title || 'Select Slicer Application',
       filters: [{ name: 'Applications', extensions: ['app'] }],
       properties: ['openFile'],
@@ -15786,7 +15898,7 @@ ipcMain.handle('open-slicer-dialog', async (event, title) => {
     });
     return result;
   } else {
-    const result = await dialog.showOpenDialog(win, {
+    const result = await safeShowOpenDialog(win, {
       title: title || 'Select Slicer Application',
       properties: ['openFile']
     });
@@ -16436,7 +16548,7 @@ const openFileInSlicerHandler = async (event, options = {}) => {
     console.error('Error opening file in slicer:', error);
     const win = getWindowFromEvent(event);
     if (win && !win.isDestroyed()) {
-      dialog.showErrorBox('Send to Slicer', error.message);
+      safeShowErrorBox('Send to Slicer', error.message);
     }
     throw error;
   }
@@ -16537,7 +16649,7 @@ const executeClientCommandHandler = async (event, commandData) => {
           ? `To open ${entryPath} from ${zipPath}:\n\n1. Extract ${entryPath} from the ZIP file\n2. Open the extracted file in ${slicerName}`
           : `Could not resolve local model paths for the slicer.`;
         if (win && !win.isDestroyed()) {
-          dialog.showMessageBox(win, {
+          safeShowMessageBox(win, {
             type: 'info',
             title: 'Send to Slicer',
             message: 'Cannot open these models in slicer from here',
@@ -17446,459 +17558,10 @@ function ensureFilamentsTablesExist() {
   }
 }
 
-/**
- * Create Shopify integration tables for product listing management.
- * Follows the same CREATE TABLE IF NOT EXISTS pattern as other ensure functions.
- */
-function ensureShopifyTablesExist() {
-  try {
-    console.log('Ensuring Shopify tables exist...');
-
-    // Product types lookup (user-editable, e.g., FIG=Figure, ORN=Ornament)
-    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_product_types (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        code TEXT NOT NULL UNIQUE,
-        name TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`).run();
-
-    // Collection codes (auto-tracked for uniqueness, e.g., DIS=Disney)
-    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_collection_codes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        code TEXT NOT NULL UNIQUE,
-        name TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`).run();
-
-    // Main products table - links a folder (product) to Shopify
-    // folder_path is the authoritative identity (full path, normalized)
-    // model_id is the primary/representative file for this product
-    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_products (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        folder_path TEXT UNIQUE,
-        model_id INTEGER,
-        collection_code TEXT,
-        type_code TEXT,
-        product_code TEXT,
-        series_number INTEGER,
-        title TEXT NOT NULL,
-        description TEXT,
-        licensor_collection TEXT,
-        option_name TEXT DEFAULT 'Finish',
-        needs_measurement_review INTEGER DEFAULT 1,
-        needs_pricing_review INTEGER DEFAULT 1,
-        needs_final_photography INTEGER DEFAULT 1,
-        not_approved_for_publishing INTEGER DEFAULT 1,
-        photo_order TEXT,
-        source_folder TEXT,
-        shopify_product_id TEXT,
-        push_status TEXT DEFAULT 'not_pushed',
-        last_pushed_at DATETIME,
-        last_push_error TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(model_id) REFERENCES models(id) ON DELETE SET NULL
-    )`).run();
-
-    // Variants table - each product has 1+ variants with their own SKU/price
-    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_variants (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product_id INTEGER NOT NULL,
-        variant_number INTEGER NOT NULL,
-        option_value TEXT NOT NULL,
-        sku TEXT,
-        price REAL,
-        compare_at_price REAL,
-        inventory_quantity INTEGER,
-        shopify_variant_id TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(product_id) REFERENCES shopify_products(id) ON DELETE CASCADE,
-        UNIQUE(product_id, variant_number)
-    )`).run();
-
-    // Product files table - tracks which files in a folder are primary/skipped/linked-separately
-    // This allows multi-3MF folders to be handled properly
-    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_product_files (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        folder_path TEXT NOT NULL,
-        model_id INTEGER NOT NULL,
-        is_primary INTEGER DEFAULT 0,
-        link_status TEXT DEFAULT 'pending',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(model_id) REFERENCES models(id) ON DELETE CASCADE,
-        UNIQUE(folder_path, model_id)
-    )`).run();
-
-    // Variant <-> file assignment (GR-PLAN-006, 2026-10-05). Separate from
-    // shopify_product_files above, which still tracks is_primary/link_status
-    // per file in a folder but no longer decides variant assignment. James's
-    // hand-painted lines print one sculpt in several finishes from the SAME
-    // file (e.g. "Matte Black" / "Bronze & Silver" / "Other (message me)"
-    // all from one .3mf) - shopify_product_files's UNIQUE(folder_path,
-    // model_id) made that impossible (confirming a second variant against
-    // the same file silently overwrote the first variant's assignment,
-    // since both lived in the one row keyed on that file). This table is
-    // keyed on the VARIANT instead: UNIQUE(folder_path, shopify_variant_id)
-    // means a variant always resolves to exactly one file (reassigning
-    // replaces it, same as before), but nothing stops several variants
-    // pointing at the same model_id.
-    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_variant_file_links (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        folder_path TEXT NOT NULL,
-        shopify_variant_id TEXT NOT NULL,
-        model_id INTEGER NOT NULL,
-        variant_option_value TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(model_id) REFERENCES models(id) ON DELETE CASCADE,
-        UNIQUE(folder_path, shopify_variant_id)
-    )`).run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_variant_file_links_model ON shopify_variant_file_links(model_id)').run();
-
-    // One-time backfill from the old per-file column into the new
-    // per-variant table, so assignments already confirmed before this
-    // change (e.g. GR-LAD-SET's variants) aren't lost. Guarded on the new
-    // table being empty so it only ever runs once - once James reassigns a
-    // variant here, the old shopify_product_files.shopify_variant_id value
-    // for that row is stale and must not be re-copied over a newer choice.
-    const variantLinksCountRow = db.prepare('SELECT COUNT(*) AS n FROM shopify_variant_file_links').get();
-    if (!variantLinksCountRow || variantLinksCountRow.n === 0) {
-      const legacyAssignments = db.prepare(`
-        SELECT folder_path, shopify_variant_id, model_id, variant_option_value
-        FROM shopify_product_files
-        WHERE shopify_variant_id IS NOT NULL
-      `).all();
-      if (legacyAssignments.length > 0) {
-        console.log(`[Shopify] Backfilling ${legacyAssignments.length} variant->file assignment(s) into shopify_variant_file_links...`);
-        const insertLink = db.prepare(`
-          INSERT OR IGNORE INTO shopify_variant_file_links (folder_path, shopify_variant_id, model_id, variant_option_value)
-          VALUES (?, ?, ?, ?)
-        `);
-        for (const row of legacyAssignments) {
-          insertLink.run(row.folder_path, row.shopify_variant_id, row.model_id, row.variant_option_value);
-        }
-      }
-    }
-
-    // Series counter (ensures unique series per collection+type combination)
-    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_series_counter (
-        collection_code TEXT NOT NULL,
-        type_code TEXT NOT NULL,
-        last_series INTEGER DEFAULT 0,
-        PRIMARY KEY(collection_code, type_code)
-    )`).run();
-
-    // Migration: Fix NOT NULL constraints on columns that should be nullable
-    // (collection_code, type_code, product_code, series_number are only needed for new products, not links)
-
-    // First, clean up any stale migration table from a failed previous run
-    const staleTables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='shopify_products_new'").all();
-    if (staleTables.length > 0) {
-      console.log('[Shopify] Cleaning up stale migration table shopify_products_new');
-      db.exec('DROP TABLE IF EXISTS shopify_products_new');
-    }
-
-    // Check current schema
-    const colInfo = db.prepare("PRAGMA table_info(shopify_products)").all();
-    const existingColNames = colInfo.map(c => c.name);
-    const notNullCols = colInfo.filter(c =>
-      ['collection_code', 'type_code', 'product_code', 'series_number'].includes(c.name) && c.notnull === 1
-    );
-
-    if (notNullCols.length > 0) {
-      console.log('[Shopify] Migrating: fixing NOT NULL constraints on:', notNullCols.map(c => c.name).join(', '));
-
-      // SQLite doesn't support ALTER COLUMN, so we need to recreate the table
-      // Build column list from existing columns to handle schema differences
-      const targetCols = [
-        'id', 'folder_path', 'model_id', 'collection_code', 'type_code', 'product_code',
-        'series_number', 'title', 'description', 'licensor_collection', 'option_name',
-        'needs_measurement_review', 'needs_pricing_review', 'needs_final_photography',
-        'not_approved_for_publishing', 'photo_order', 'source_folder', 'shopify_product_id',
-        'push_status', 'last_pushed_at', 'last_push_error', 'created_at', 'updated_at'
-      ];
-      const commonCols = targetCols.filter(c => existingColNames.includes(c));
-      const colList = commonCols.join(', ');
-
-      // Create new table with correct schema
-      db.exec(`
-        CREATE TABLE shopify_products_new (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          folder_path TEXT UNIQUE,
-          model_id INTEGER,
-          collection_code TEXT,
-          type_code TEXT,
-          product_code TEXT,
-          series_number INTEGER,
-          title TEXT NOT NULL,
-          description TEXT,
-          licensor_collection TEXT,
-          option_name TEXT DEFAULT 'Finish',
-          needs_measurement_review INTEGER DEFAULT 1,
-          needs_pricing_review INTEGER DEFAULT 1,
-          needs_final_photography INTEGER DEFAULT 1,
-          not_approved_for_publishing INTEGER DEFAULT 1,
-          photo_order TEXT,
-          source_folder TEXT,
-          shopify_product_id TEXT,
-          push_status TEXT DEFAULT 'not_pushed',
-          last_pushed_at DATETIME,
-          last_push_error TEXT,
-          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY(model_id) REFERENCES models(id) ON DELETE SET NULL
-        )
-      `);
-
-      // Copy existing data (only common columns)
-      db.prepare(`INSERT INTO shopify_products_new (${colList}) SELECT ${colList} FROM shopify_products`).run();
-
-      // Drop old table and rename new one
-      db.exec('DROP TABLE shopify_products');
-      db.exec('ALTER TABLE shopify_products_new RENAME TO shopify_products');
-
-      console.log('[Shopify] Migration complete - NOT NULL constraints removed');
-    }
-
-    // Migration: Add missing columns for existing installs
-    const productCols = db.prepare("PRAGMA table_info(shopify_products)").all();
-    const productColNames = productCols.map(c => c.name);
-    console.log('[Shopify] Current shopify_products columns:', productColNames.join(', '));
-
-    // Add model_id if missing (critical for reconciliation)
-    if (!productColNames.includes('model_id')) {
-      console.log('[Shopify] Migrating: adding model_id column...');
-      db.prepare('ALTER TABLE shopify_products ADD COLUMN model_id INTEGER').run();
-      console.log('[Shopify] Added model_id column');
-    }
-
-    // Add folder_path if missing (new folder-based reconciliation)
-    if (!productColNames.includes('folder_path')) {
-      console.log('[Shopify] Migrating: adding folder_path column...');
-      db.prepare('ALTER TABLE shopify_products ADD COLUMN folder_path TEXT').run();
-      console.log('[Shopify] Added folder_path column');
-      // Backfill folder_path from existing model_id entries
-      db.prepare(`
-        UPDATE shopify_products
-        SET folder_path = (
-          SELECT REPLACE(
-            SUBSTR(REPLACE(m.filePath, '\\', '/'), 1,
-              LENGTH(REPLACE(m.filePath, '\\', '/')) - LENGTH(m.fileName) - 1),
-            '\\', '/'
-          )
-          FROM models m WHERE m.id = shopify_products.model_id
-        )
-        WHERE model_id IS NOT NULL AND folder_path IS NULL
-      `).run();
-      console.log('[Shopify] Backfilled folder_path from existing entries');
-    }
-
-    // Add option_name if missing
-    if (!productColNames.includes('option_name')) {
-      console.log('[Shopify] Migrating: adding option_name column...');
-      db.prepare("ALTER TABLE shopify_products ADD COLUMN option_name TEXT DEFAULT 'Finish'").run();
-      console.log('[Shopify] Added option_name column');
-    }
-
-    // Verify critical columns exist after migration
-    const verifyColumns = db.prepare("PRAGMA table_info(shopify_products)").all();
-    const verifyColNames = verifyColumns.map(c => c.name);
-    if (!verifyColNames.includes('model_id')) {
-      console.error('[Shopify] CRITICAL: model_id column still missing after migration!');
-      throw new Error('Shopify migration failed: model_id column not added');
-    }
-    if (!verifyColNames.includes('folder_path')) {
-      console.error('[Shopify] CRITICAL: folder_path column still missing after migration!');
-      throw new Error('Shopify migration failed: folder_path column not added');
-    }
-
-    // Indexes for performance
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_products_model ON shopify_products(model_id)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_products_folder ON shopify_products(folder_path)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_products_shopify_id ON shopify_products(shopify_product_id)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_products_push_status ON shopify_products(push_status)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_variants_product ON shopify_variants(product_id)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_variants_sku ON shopify_variants(sku)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_variants_shopify_id ON shopify_variants(shopify_variant_id)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_product_types_code ON shopify_product_types(code)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_collection_codes_code ON shopify_collection_codes(code)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_product_files_folder ON shopify_product_files(folder_path)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_product_files_model ON shopify_product_files(model_id)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_product_files_status ON shopify_product_files(link_status)').run();
-
-    // Migration: Add variant mapping columns to shopify_product_files
-    const productFilesCols = db.prepare("PRAGMA table_info(shopify_product_files)").all();
-    const productFilesColNames = productFilesCols.map(c => c.name);
-
-    if (!productFilesColNames.includes('shopify_variant_id')) {
-      console.log('[Shopify] Migrating: adding shopify_variant_id column to shopify_product_files...');
-      db.prepare('ALTER TABLE shopify_product_files ADD COLUMN shopify_variant_id TEXT').run();
-      console.log('[Shopify] Added shopify_variant_id column');
-    }
-
-    if (!productFilesColNames.includes('variant_option_value')) {
-      console.log('[Shopify] Migrating: adding variant_option_value column to shopify_product_files...');
-      db.prepare('ALTER TABLE shopify_product_files ADD COLUMN variant_option_value TEXT').run();
-      console.log('[Shopify] Added variant_option_value column');
-    }
-
-    // Index for variant lookups
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_product_files_variant ON shopify_product_files(shopify_variant_id)').run();
-
-    // One-time migration: Clear auto-matched variant mappings (filename matching was unreliable)
-    // Uses a settings flag to ensure this only runs once
-    const variantCleanupDone = db.prepare("SELECT value FROM settings WHERE key = 'variant_mapping_cleanup_v1'").get();
-    if (!variantCleanupDone) {
-      const countBefore = db.prepare("SELECT COUNT(*) as cnt FROM shopify_product_files WHERE shopify_variant_id IS NOT NULL").get();
-      if (countBefore.cnt > 0) {
-        console.log(`[Shopify] Clearing ${countBefore.cnt} auto-matched variant mappings (filename matching was unreliable)...`);
-        db.prepare("UPDATE shopify_product_files SET shopify_variant_id = NULL, variant_option_value = NULL WHERE shopify_variant_id IS NOT NULL").run();
-        console.log('[Shopify] Variant mappings cleared - use manual assignment in editor');
-      }
-      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('variant_mapping_cleanup_v1', '1')").run();
-    }
-
-    // Seed default product types if table is empty
-    const typeCount = db.prepare('SELECT COUNT(*) as count FROM shopify_product_types').get();
-    if (typeCount.count === 0) {
-      console.log('Seeding default product types...');
-      const defaultTypes = [
-        { code: 'FIG', name: 'Figure' },
-        { code: 'ORN', name: 'Ornament' },
-        { code: 'BOX', name: 'Box / Container' },
-        { code: 'ART', name: 'Articulated' },
-        { code: 'DEC', name: 'Decoration' },
-        { code: 'KEY', name: 'Keychain' },
-        { code: 'MAG', name: 'Magnet' },
-        { code: 'PLT', name: 'Planter' },
-        { code: 'SGN', name: 'Sign / Nameplate' },
-        { code: 'TOY', name: 'Toy / Fidget' },
-        { code: 'UTL', name: 'Utility / Functional' },
-        { code: 'OTH', name: 'Other' }
-      ];
-      const insertType = db.prepare('INSERT INTO shopify_product_types (code, name) VALUES (?, ?)');
-      for (const t of defaultTypes) {
-        insertType.run(t.code, t.name);
-      }
-      console.log(`Seeded ${defaultTypes.length} default product types`);
-    }
-
-    // --- GR-PLAN-006: order sync tables ---
-    // One row per Shopify order. fulfillment/financial status mirror Shopify's
-    // own (read-only, refreshed on every sync); local_status is Printventory's
-    // own rollup (new / printing / printed / shipped) and is never written
-    // back to Shopify until the Phase C fulfillment push.
-    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_orders (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        shopify_order_gid TEXT UNIQUE NOT NULL,
-        order_name TEXT NOT NULL,
-        order_created_at DATETIME,
-        customer_name TEXT,
-        total_amount REAL,
-        total_currency TEXT,
-        financial_status TEXT,
-        fulfillment_status TEXT,
-        local_status TEXT DEFAULT 'new',
-        tracking_carrier TEXT,
-        tracking_number TEXT,
-        tracking_url TEXT,
-        fulfilled_at DATETIME,
-        last_synced_at DATETIME,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`).run();
-
-    // One row per order line item. matched_model_id is set once the SKU is
-    // resolved to a Printventory product (auto-matched on sync, or manually
-    // linked through the same reconciliation UI as GR-PLAN-004's folder
-    // linking). quantity_printed supports partial progress on a
-    // quantity > 1 line without a separate row per unit.
-    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_order_line_items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        order_id INTEGER NOT NULL,
-        shopify_line_item_gid TEXT NOT NULL,
-        sku TEXT,
-        title TEXT,
-        variant_title TEXT,
-        unit_price REAL,
-        unit_price_currency TEXT,
-        shopify_image_url TEXT,
-        shopify_product_gid TEXT,
-        shopify_variant_gid TEXT,
-        quantity_ordered INTEGER NOT NULL DEFAULT 1,
-        quantity_printed INTEGER NOT NULL DEFAULT 0,
-        matched_model_id INTEGER,
-        matched_shopify_product_id INTEGER,
-        link_status TEXT DEFAULT 'unmatched',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(order_id) REFERENCES shopify_orders(id) ON DELETE CASCADE,
-        FOREIGN KEY(matched_model_id) REFERENCES models(id) ON DELETE SET NULL,
-        FOREIGN KEY(matched_shopify_product_id) REFERENCES shopify_products(id) ON DELETE SET NULL,
-        UNIQUE(order_id, shopify_line_item_gid)
-    )`).run();
-
-    // Migration: columns added after the initial GR-PLAN-006 table (variant
-    // detail/price/image for the redesigned Orders pane card, plus the raw
-    // Shopify product gid used for the product-level-link fallback match).
-    const orderLineItemCols = db.prepare("PRAGMA table_info(shopify_order_line_items)").all();
-    const orderLineItemColNames = orderLineItemCols.map(c => c.name);
-    const orderLineItemMigrations = [
-      ['variant_title', 'TEXT'],
-      ['unit_price', 'REAL'],
-      ['unit_price_currency', 'TEXT'],
-      ['shopify_image_url', 'TEXT'],
-      ['shopify_product_gid', 'TEXT'],
-      ['shopify_variant_gid', 'TEXT']
-    ];
-    for (const [colName, colType] of orderLineItemMigrations) {
-      if (!orderLineItemColNames.includes(colName)) {
-        console.log(`[Shopify] Migrating: adding ${colName} column to shopify_order_line_items...`);
-        db.prepare(`ALTER TABLE shopify_order_line_items ADD COLUMN ${colName} ${colType}`).run();
-      }
-    }
-
-    // GR-PLAN-006: James - "is it logged correctly? ... its critical it
-    // works as etsy requires tracking info in order to release its
-    // reserve." Before this, the only record of a fulfillment push was a
-    // console.log in shopify.js's createFulfillment() - invisible in a
-    // packaged build (main-process console.log has nowhere to go once
-    // there's no terminal attached), and even in dev mode it only showed
-    // what WE sent, never what Shopify actually confirmed back. This table
-    // is a permanent, queryable audit trail for every push attempt
-    // (success or failure), independent of any log file or dev console.
-    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_fulfillment_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        order_id INTEGER NOT NULL,
-        attempted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        carrier_sent TEXT,
-        tracking_number_sent TEXT,
-        tracking_url_sent TEXT,
-        success INTEGER NOT NULL,
-        shopify_fulfillment_gid TEXT,
-        confirmed_carrier TEXT,
-        confirmed_number TEXT,
-        confirmed_url TEXT,
-        error_message TEXT,
-        FOREIGN KEY(order_id) REFERENCES shopify_orders(id) ON DELETE CASCADE
-    )`).run();
-
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_orders_gid ON shopify_orders(shopify_order_gid)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_orders_local_status ON shopify_orders(local_status)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_order_line_items_order_id ON shopify_order_line_items(order_id)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_order_line_items_sku ON shopify_order_line_items(sku)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_order_line_items_link_status ON shopify_order_line_items(link_status)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_fulfillment_log_order_id ON shopify_fulfillment_log(order_id)').run();
-
-    console.log('Shopify tables ensured');
-    return true;
-  } catch (error) {
-    console.error('Error ensuring Shopify tables exist:', error);
-    return false;
-  }
-}
+// ensureShopifyTablesExist() moved to core/schema.js (Phase 4 core extraction,
+// 2026-10-05). It is now parameterized to accept db instead of closing over
+// the module-scope variable here; see core/schema.js for the full body and
+// rationale. Required above as `const { ensureShopifyTablesExist } = require('./core/schema');`.
 
 // Add this function to get or create a persistent client ID
 function getClientId() {

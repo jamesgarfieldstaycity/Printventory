@@ -252,6 +252,7 @@ contextBridge.exposeInMainWorld('electron', {
     });
   },
   showMessage: (title, message, buttons) => ipcRenderer.invoke('show-message', title, message, buttons),
+  onServerAlert: (callback) => ipcRenderer.on('server-alert', (event, payload) => callback(payload)),
   showMessageBox: (options) => ipcRenderer.invoke('show-message-box', options),
   onOpenBackupRestore: (callback) => ipcRenderer.on('open-backup-restore', callback),
   backupDatabase: () => ipcRenderer.invoke('backup-database'),

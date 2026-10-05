@@ -725,6 +725,10 @@
   
   // Ensure all event listener methods are available immediately
   console.log('[Bridge] Creating event listener methods...');
+  window.electron.onServerAlert = function(callback) {
+    window.electron.on('server-alert', callback);
+  };
+
   window.electron.onOpenTagManager = function(callback) {
     window.electron.on('open-tag-manager', callback);
   };
