@@ -1013,9 +1013,22 @@ async function fetchOrders(storeDomain, clientId, clientSecret, options = {}) {
                   title
                   quantity
                   sku
+                  variantTitle
+                  originalUnitPriceSet {
+                    shopMoney {
+                      amount
+                      currencyCode
+                    }
+                  }
+                  image {
+                    url
+                  }
                   variant {
                     id
                     sku
+                    product {
+                      id
+                    }
                   }
                 }
               }
@@ -1052,7 +1065,17 @@ async function fetchOrders(storeDomain, clientId, clientSecret, options = {}) {
           title: li.title,
           quantity: li.quantity,
           sku: li.sku || li.variant?.sku || null,
-          variantId: li.variant?.id || null
+          variantId: li.variant?.id || null,
+          // GR-PLAN-006: the parent Shopify PRODUCT gid, used as a fallback
+          // match when the specific variant/SKU has no shopify_variants row
+          // of its own (e.g. a "complete set" bundle SKU) but the product
+          // itself is linked in Printventory - lets the Orders pane offer
+          // "Open Product Manager" instead of silently guessing a file.
+          productGid: li.variant?.product?.id || null,
+          variantTitle: li.variantTitle || null,
+          unitPrice: li.originalUnitPriceSet?.shopMoney?.amount || null,
+          unitPriceCurrency: li.originalUnitPriceSet?.shopMoney?.currencyCode || null,
+          imageUrl: li.image?.url || null
         };
       });
       allOrders.push({

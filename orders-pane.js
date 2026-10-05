@@ -88,31 +88,82 @@
   // Rendering
   // ============================================
 
-  function renderLineItem(li) {
-    const matched = !!li.matched_model_id;
-    const qtyLabel = li.quantity_ordered > 1 ? `×${li.quantity_ordered}` : '';
-    const skuLabel = escapeHtml(li.sku || 'no SKU');
+  /**
+   * Option A card (approved wireframe): thumbnail + full-width title on
+   * their own row, a metadata row (variant tag, mono SKU tag, qty x price),
+   * then a full-width action button below - mirrors Shopify's own order
+   * admin layout instead of cramming title + button into one line (the
+   * earlier layout that truncated titles to "The ...").
+   *
+   * Three link_status outcomes drive the action row differently:
+   *  - auto-matched:    this exact variant's own file is known -> "Open in
+   *                      Slicer" opens it directly.
+   *  - product-linked:  the SKU itself didn't match, but the parent Shopify
+   *                      product is linked in Printventory (the common
+   *                      bundle case - e.g. Halloween Ghosts' 8-variant
+   *                      "complete set" SKU) -> "Open Product Manager" opens
+   *                      that product's existing editor dialog, which lists
+   *                      every variant with its own "open in slicer" action.
+   *                      Enabled only when matched_file_path actually
+   *                      resolves (the product's primary model file) -
+   *                      disabled with an explanatory label otherwise.
+   *  - manually-linked:  same as auto-matched once linked (opens the chosen
+   *                      file directly).
+   *  - unmatched:        nothing in Printventory claims this line -> show
+   *                      the manual-link box, same as before.
+   */
+  function formatMoney(amount, currency) {
+    if (amount === null || amount === undefined || amount === '') return '';
+    const n = Number(amount);
+    if (Number.isNaN(n)) return '';
+    try {
+      return new Intl.NumberFormat(undefined, { style: 'currency', currency: currency || 'USD' }).format(n);
+    } catch (_) {
+      return `${n.toFixed(2)} ${currency || ''}`.trim();
+    }
+  }
 
-    if (matched) {
-      return `
-        <div class="order-line" data-line-id="${li.id}">
-          <div class="order-line-info">
-            <span class="order-line-title">${escapeHtml(li.matched_file_name || li.title)}</span>
-            <span class="order-line-qty">${skuLabel} ${qtyLabel}</span>
-          </div>
-          <button type="button" class="order-line-print-btn" data-action="open-slicer" data-path="${escapeHtml(li.matched_file_path || '')}">Open in Slicer</button>
-        </div>
-      `;
+  function renderLineItem(li) {
+    const qtyLabel = li.quantity_ordered > 1 ? `×${li.quantity_ordered}` : '×1';
+    const priceLabel = formatMoney(li.unit_price, li.unit_price_currency);
+    const qtyPriceLabel = [qtyLabel, priceLabel].filter(Boolean).join(' · ');
+    const thumbHtml = li.shopify_image_url
+      ? `<img class="order-line-thumb" src="${escapeHtml(li.shopify_image_url)}" alt="">`
+      : `<div class="order-line-thumb order-line-thumb-placeholder"></div>`;
+    const titleHtml = escapeHtml(li.matched_file_name || li.title);
+    const variantTagHtml = li.variant_title
+      ? `<span class="order-line-tag order-line-variant-tag">${escapeHtml(li.variant_title)}</span>`
+      : '';
+    const skuTagHtml = `<span class="order-line-tag order-line-sku-tag">${escapeHtml(li.sku || 'no SKU')}</span>`;
+
+    let actionHtml;
+    if (li.link_status === 'auto-matched' || li.link_status === 'manually-linked') {
+      actionHtml = `<button type="button" class="order-line-action-btn" data-action="open-slicer" data-path="${escapeHtml(li.matched_file_path || '')}">Open in Slicer</button>`;
+    } else if (li.link_status === 'product-linked') {
+      if (li.matched_file_path) {
+        actionHtml = `<button type="button" class="order-line-action-btn order-line-action-btn-secondary" data-action="open-product-manager" data-path="${escapeHtml(li.matched_file_path)}">Open Product Manager</button>`;
+      } else {
+        actionHtml = `<button type="button" class="order-line-action-btn" disabled title="Linked product has no primary model file to open">Open Product Manager</button>`;
+      }
+    } else {
+      actionHtml = `<input type="text" class="order-line-link-select" list="orders-models-datalist"
+          placeholder="Link to model..." data-action="link-model" data-line-id="${li.id}">`;
     }
 
+    const unmatchedClass = (li.link_status === 'unmatched') ? ' order-line-unmatched' : '';
+
     return `
-      <div class="order-line order-line-unmatched" data-line-id="${li.id}">
-        <div class="order-line-info">
-          <span class="order-line-title">${escapeHtml(li.title)}</span>
-          <span class="order-line-qty">${skuLabel} ${qtyLabel} — unmatched</span>
+      <div class="order-line${unmatchedClass}" data-line-id="${li.id}">
+        <div class="order-line-top">
+          ${thumbHtml}
+          <span class="order-line-title">${titleHtml}</span>
         </div>
-        <input type="text" class="order-line-link-select" list="orders-models-datalist"
-          placeholder="Link to model..." data-action="link-model" data-line-id="${li.id}">
+        <div class="order-line-meta">
+          ${variantTagHtml}
+          ${skuTagHtml}
+          <span class="order-line-qty-price">${escapeHtml(qtyPriceLabel)}</span>
+        </div>
+        <div class="order-line-action">${actionHtml}</div>
       </div>
     `;
   }
@@ -181,6 +232,22 @@
       });
   }
 
+  // Bundle / product-linked fallback (GR-PLAN-006): reuse Printventory's
+  // existing Shopify product editor dialog rather than sending James out to
+  // Shopify's own site. That dialog already lists every variant on the
+  // product (populateVariantAssignments() in renderer.js) with its own
+  // "open in slicer" button, so a bundle line like Halloween Ghosts'
+  // 8-variant "complete set" SKU gets a real per-variant action instead of
+  // a single guessed file.
+  function handleOpenProductManager(btn) {
+    const path = btn.dataset.path;
+    if (!path || typeof window.openShopifyProductEditorForPath !== 'function') {
+      alert('Could not open the product manager for this line.');
+      return;
+    }
+    window.openShopifyProductEditorForPath(path);
+  }
+
   async function handleLinkModel(input) {
     const lineId = input.dataset.lineId;
     const typedName = input.value.trim();
@@ -215,8 +282,10 @@
     listEl.dataset.bound = '1';
 
     listEl.addEventListener('click', (e) => {
-      const btn = e.target.closest('[data-action="open-slicer"]');
-      if (btn) handleOpenSlicer(btn);
+      const slicerBtn = e.target.closest('[data-action="open-slicer"]');
+      if (slicerBtn) { handleOpenSlicer(slicerBtn); return; }
+      const managerBtn = e.target.closest('[data-action="open-product-manager"]');
+      if (managerBtn) { handleOpenProductManager(managerBtn); return; }
     });
 
     listEl.addEventListener('change', (e) => {
@@ -344,6 +413,27 @@
   // Initialization
   // ============================================
 
+  /**
+   * If the pane was left pinned open from a previous session, load its
+   * content immediately rather than waiting for a hover/click that won't
+   * come (the pane already LOOKS open on restart).
+   *
+   * Can't just check PaneController.isPinned(PANE_ID) synchronously right
+   * after registerPane(): PaneController restores persisted state via an
+   * async settings read it never awaits from register(), so isPinned()
+   * still reports the pre-restore default (closed) at this exact point even
+   * though the pane visually ends up pinned a moment later. Reading the
+   * same persisted setting directly here sidesteps that timing gap.
+   */
+  async function loadIfPersistedOpen() {
+    try {
+      const saved = await window.electron?.getSetting?.('ordersPaneState');
+      if (saved === 'pinned') {
+        loadOrdersIfNeeded();
+      }
+    } catch (_) { /* ignore */ }
+  }
+
   function init() {
     registerPane();
     bindListEvents();
@@ -352,11 +442,7 @@
     bindPaneOpenRefresh();
     refreshBadge();
     updateLastSyncedLabel();
-    // If the pane was left pinned open from a previous session, load its
-    // content immediately rather than waiting for a hover/click that won't come.
-    if (window.PaneController?.isPinned(PANE_ID)) {
-      loadOrdersIfNeeded();
-    }
+    loadIfPersistedOpen();
   }
 
   window.OrdersPane = { refreshBadge, renderOrdersList };

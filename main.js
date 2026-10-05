@@ -8292,29 +8292,68 @@ let shopifyOrderSyncInFlight = false;
 const SHOPIFY_ORDER_SYNC_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes; see GR-PLAN-006 open question on interval
 
 /**
- * Resolve a line item's SKU to a Printventory product, the same way
- * GR-PLAN-004's reconciliation already matches: by variant SKU, joined
- * through shopify_variants -> shopify_products -> model_id. Returns
- * { matchedModelId, matchedShopifyProductId } (both null if no match).
+ * Resolve a line item to a Printventory product. Three-way match, in order:
+ *
+ *  1. SKU -> shopify_variants -> shopify_products.model_id ("auto-matched").
+ *     The same lookup GR-PLAN-004's reconciliation already does. Covers the
+ *     normal case: this exact variant was imported and has its own SKU row.
+ *
+ *  2. Parent Shopify product gid -> shopify_products.shopify_product_id
+ *     ("product-linked"). Covers a line whose own SKU never got a
+ *     shopify_variants row - most commonly a multi-variant bundle SKU (e.g.
+ *     Halloween Ghosts' "complete set" option alongside its 8 individual
+ *     ghosts) - but whose parent product IS linked in Printventory. The
+ *     Orders pane can't open a single file for a bundle line with confidence,
+ *     but it can open that product's own management dialog, which lists
+ *     every variant (bundle included) with its own "open in slicer" action -
+ *     see populateVariantAssignments() in renderer.js.
+ *
+ *  3. Neither resolves -> "unmatched". Nothing in Printventory claims this
+ *     line; falls to the manual-link box.
+ *
+ * Returns { matchedModelId, matchedShopifyProductId, linkStatus }.
+ * matchedModelId is shopify_products.model_id either way (the product's
+ * primary model file) - callers use it to decide whether a "Open Product
+ * Manager" action has anywhere to open, not to assume it's the specific
+ * variant's own file when linkStatus is 'product-linked'.
  */
-function matchOrderLineItemSku(sku) {
-  if (!sku || !String(sku).trim()) {
-    return { matchedModelId: null, matchedShopifyProductId: null };
+function matchOrderLineItem(sku, productGid) {
+  const cleanSku = sku && String(sku).trim();
+  if (cleanSku) {
+    const row = db.prepare(`
+      SELECT sp.id AS shopify_product_id, sp.model_id AS model_id
+      FROM shopify_variants sv
+      JOIN shopify_products sp ON sp.id = sv.product_id
+      WHERE sv.sku = ?
+      LIMIT 1
+    `).get(cleanSku);
+    if (row) {
+      return {
+        matchedModelId: row.model_id || null,
+        matchedShopifyProductId: row.shopify_product_id || null,
+        linkStatus: 'auto-matched'
+      };
+    }
   }
-  const row = db.prepare(`
-    SELECT sp.id AS shopify_product_id, sp.model_id AS model_id
-    FROM shopify_variants sv
-    JOIN shopify_products sp ON sp.id = sv.product_id
-    WHERE sv.sku = ?
-    LIMIT 1
-  `).get(String(sku).trim());
-  if (!row) {
-    return { matchedModelId: null, matchedShopifyProductId: null };
+
+  const cleanGid = productGid && String(productGid).trim();
+  if (cleanGid) {
+    const row = db.prepare(`
+      SELECT id AS shopify_product_id, model_id
+      FROM shopify_products
+      WHERE shopify_product_id = ?
+      LIMIT 1
+    `).get(cleanGid);
+    if (row) {
+      return {
+        matchedModelId: row.model_id || null,
+        matchedShopifyProductId: row.shopify_product_id || null,
+        linkStatus: 'product-linked'
+      };
+    }
   }
-  return {
-    matchedModelId: row.model_id || null,
-    matchedShopifyProductId: row.shopify_product_id || null
-  };
+
+  return { matchedModelId: null, matchedShopifyProductId: null, linkStatus: 'unmatched' };
 }
 
 /**
@@ -8361,15 +8400,22 @@ async function syncShopifyOrdersHandler(event, options = {}) {
 
   const upsertLineItem = db.prepare(`
     INSERT INTO shopify_order_line_items (
-      order_id, shopify_line_item_gid, sku, title, quantity_ordered,
-      matched_model_id, matched_shopify_product_id, link_status, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      order_id, shopify_line_item_gid, sku, title, variant_title,
+      unit_price, unit_price_currency, shopify_image_url, shopify_product_gid,
+      quantity_ordered, matched_model_id, matched_shopify_product_id,
+      link_status, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(order_id, shopify_line_item_gid) DO UPDATE SET
       sku = excluded.sku,
       title = excluded.title,
+      variant_title = excluded.variant_title,
+      unit_price = excluded.unit_price,
+      unit_price_currency = excluded.unit_price_currency,
+      shopify_image_url = excluded.shopify_image_url,
+      shopify_product_gid = excluded.shopify_product_gid,
       quantity_ordered = excluded.quantity_ordered,
-      -- Never downgrade a manual link back to auto-matched/unmatched on re-sync;
-      -- only fill in a match if this line doesn't already have one.
+      -- Never downgrade a manual link back to auto-matched/product-linked/unmatched
+      -- on re-sync; only fill in a match if this line doesn't already have one.
       matched_model_id = CASE WHEN shopify_order_line_items.link_status = 'manually-linked'
         THEN shopify_order_line_items.matched_model_id ELSE excluded.matched_model_id END,
       matched_shopify_product_id = CASE WHEN shopify_order_line_items.link_status = 'manually-linked'
@@ -8394,12 +8440,13 @@ async function syncShopifyOrdersHandler(event, options = {}) {
       const orderRow = getOrderId.get(order.id);
 
       for (const li of order.lineItems) {
-        const { matchedModelId, matchedShopifyProductId } = matchOrderLineItemSku(li.sku);
-        const linkStatus = matchedModelId ? 'auto-matched' : 'unmatched';
-        if (matchedModelId) newlyMatchedLines++; else unmatchedLines++;
+        const { matchedModelId, matchedShopifyProductId, linkStatus } =
+          matchOrderLineItem(li.sku, li.productGid);
+        if (linkStatus === 'auto-matched') newlyMatchedLines++; else unmatchedLines++;
         upsertLineItem.run(
-          orderRow.id, li.id, li.sku, li.title, li.quantity,
-          matchedModelId, matchedShopifyProductId, linkStatus
+          orderRow.id, li.id, li.sku, li.title, li.variantTitle,
+          li.unitPrice, li.unitPriceCurrency, li.imageUrl, li.productGid,
+          li.quantity, matchedModelId, matchedShopifyProductId, linkStatus
         );
       }
     }
@@ -17523,6 +17570,11 @@ function ensureShopifyTablesExist() {
         shopify_line_item_gid TEXT NOT NULL,
         sku TEXT,
         title TEXT,
+        variant_title TEXT,
+        unit_price REAL,
+        unit_price_currency TEXT,
+        shopify_image_url TEXT,
+        shopify_product_gid TEXT,
         quantity_ordered INTEGER NOT NULL DEFAULT 1,
         quantity_printed INTEGER NOT NULL DEFAULT 0,
         matched_model_id INTEGER,
@@ -17535,6 +17587,25 @@ function ensureShopifyTablesExist() {
         FOREIGN KEY(matched_shopify_product_id) REFERENCES shopify_products(id) ON DELETE SET NULL,
         UNIQUE(order_id, shopify_line_item_gid)
     )`).run();
+
+    // Migration: columns added after the initial GR-PLAN-006 table (variant
+    // detail/price/image for the redesigned Orders pane card, plus the raw
+    // Shopify product gid used for the product-level-link fallback match).
+    const orderLineItemCols = db.prepare("PRAGMA table_info(shopify_order_line_items)").all();
+    const orderLineItemColNames = orderLineItemCols.map(c => c.name);
+    const orderLineItemMigrations = [
+      ['variant_title', 'TEXT'],
+      ['unit_price', 'REAL'],
+      ['unit_price_currency', 'TEXT'],
+      ['shopify_image_url', 'TEXT'],
+      ['shopify_product_gid', 'TEXT']
+    ];
+    for (const [colName, colType] of orderLineItemMigrations) {
+      if (!orderLineItemColNames.includes(colName)) {
+        console.log(`[Shopify] Migrating: adding ${colName} column to shopify_order_line_items...`);
+        db.prepare(`ALTER TABLE shopify_order_line_items ADD COLUMN ${colName} ${colType}`).run();
+      }
+    }
 
     db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_orders_gid ON shopify_orders(shopify_order_gid)').run();
     db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_orders_local_status ON shopify_orders(local_status)').run();

@@ -13289,13 +13289,24 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
   color: rgba(255, 255, 255, 0.4);
 }
 
+/* GR-PLAN-006 Option A card (approved wireframe): full-width title row,
+   a separate metadata row (variant tag, SKU tag, qty x price), and a
+   full-width action button below - replaces the earlier single flex row
+   that truncated titles ("The ...") and wrapped SKUs badly. */
 .order-line {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.order-line-top {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.02);
+  min-width: 0;
 }
 
 .order-line-thumb {
@@ -13307,24 +13318,53 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
   flex-shrink: 0;
 }
 
-.order-line-info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
+.order-line-thumb-placeholder {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .order-line-title {
+  flex: 1;
+  min-width: 0;
   font-size: 12px;
+  font-weight: 500;
   color: #fff;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: break-word;
+  white-space: normal;
+  line-height: 1.3;
+}
+
+.order-line-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-left: 40px; /* aligns under the title, past the 32px thumb + gap */
+}
+
+.order-line-tag {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
   white-space: nowrap;
 }
 
-.order-line-qty {
+.order-line-variant-tag {
+  background: rgba(74, 158, 255, 0.15);
+  color: #4a9eff;
+}
+
+.order-line-sku-tag {
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.7);
+  overflow-wrap: anywhere;
+}
+
+.order-line-qty-price {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.5);
+  margin-left: auto;
+  white-space: nowrap;
 }
 
 .order-line-unmatched {
@@ -13335,31 +13375,50 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
   color: #ffb446;
 }
 
-.order-line-print-btn {
-  flex-shrink: 0;
+.order-line-action {
+  display: flex;
+}
+
+.order-line-action-btn {
+  width: 100%;
   background: rgba(74, 158, 255, 0.15);
   color: #4a9eff;
   border: 1px solid rgba(74, 158, 255, 0.3);
   border-radius: 6px;
-  padding: 4px 8px;
+  padding: 6px 8px;
   font-size: 11px;
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
 }
 
-.order-line-print-btn:hover {
+.order-line-action-btn:hover:not(:disabled) {
   background: rgba(74, 158, 255, 0.25);
 }
 
+.order-line-action-btn-secondary {
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.75);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.order-line-action-btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.order-line-action-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .order-line-link-select {
-  flex-shrink: 0;
-  max-width: 140px;
+  width: 100%;
   font-size: 11px;
   background: rgba(30, 30, 46, 0.9);
   color: #fff;
   border: 1px solid rgba(255, 180, 70, 0.4);
   border-radius: 6px;
-  padding: 3px 4px;
+  padding: 5px 6px;
 }
 
 .orders-empty-state {
