@@ -735,7 +735,19 @@
     const toast = document.getElementById('orders-sync-toast');
     if (!toast) return;
     const n = summary?.newOrders || 0;
-    toast.textContent = n === 1 ? '1 new order synced' : `${n} new orders synced`;
+    const backfilled = summary?.historicalShipmentsBackfilled || 0;
+    const parts = [];
+    if (n > 0) parts.push(n === 1 ? '1 new order synced' : `${n} new orders synced`);
+    if (backfilled > 0) {
+      // GR-PLAN-006: historical orders found to already be genuinely
+      // shipped (real tracking info on the Shopify order), backfilled as
+      // shipped here rather than needing James to process them by hand.
+      parts.push(backfilled === 1
+        ? '1 order marked shipped from history'
+        : `${backfilled} orders marked shipped from history`);
+    }
+    if (!parts.length) return;
+    toast.textContent = parts.join(' · ');
     toast.classList.add('visible');
     clearTimeout(toastTimeout);
     toastTimeout = setTimeout(() => toast.classList.remove('visible'), 4000);
@@ -789,7 +801,7 @@
       refreshBadge();
       window.electron?.saveSetting?.('ordersLastSyncedAt', String(Date.now()));
       updateLastSyncedLabel();
-      if (summary && summary.newOrders > 0) {
+      if (summary && (summary.newOrders > 0 || summary.historicalShipmentsBackfilled > 0)) {
         showSyncToast(summary);
       }
       if (ordersListLoaded) {

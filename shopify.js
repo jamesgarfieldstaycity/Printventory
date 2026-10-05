@@ -1037,6 +1037,14 @@ async function fetchOrders(storeDomain, clientId, clientSecret, options = {}) {
                 currencyCode
               }
             }
+            fulfillments(first: 10) {
+              createdAt
+              trackingInfo {
+                company
+                number
+                url
+              }
+            }
             lineItems(first: 100) {
               edges {
                 node {
@@ -1118,6 +1126,18 @@ async function fetchOrders(storeDomain, clientId, clientSecret, options = {}) {
         customerName: [node.customer?.firstName, node.customer?.lastName].filter(Boolean).join(' ') || null,
         totalAmount: node.totalPriceSet?.shopMoney?.amount || null,
         totalCurrency: node.totalPriceSet?.shopMoney?.currencyCode || null,
+        // GR-PLAN-006: raw per-fulfillment tracking info, used by
+        // syncShopifyOrdersHandler to backfill genuinely-shipped historical
+        // orders (see pickHistoricalShipment in main.js) - never written
+        // back to Shopify, read-only evidence of what already happened.
+        fulfillments: (node.fulfillments || []).map((f) => ({
+          createdAt: f.createdAt,
+          tracking: (f.trackingInfo || []).map((t) => ({
+            company: t.company || null,
+            number: t.number || null,
+            url: t.url || null
+          }))
+        })),
         lineItems
       });
       cursor = edge.cursor;

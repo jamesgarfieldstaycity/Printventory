@@ -8419,6 +8419,37 @@ function matchOrderLineItem(sku, productGid, variantGid) {
 }
 
 /**
+ * GR-PLAN-006: James asked to backfill historical orders that were already
+ * shipped outside Printventory (shipped directly in Shopify admin before
+ * Printventory existed, or via some other path) - "pull the historical
+ * tracking info and remove the need to do anything." The signal used is
+ * deliberately a real tracking NUMBER on one of the order's Shopify
+ * fulfillments, never Shopify's own fulfillment_status alone - that status
+ * also flips to "fulfilled" for an order toggled fulfilled with no tracking
+ * during development/testing, which James separately confirmed still
+ * genuinely needs printing/shipping. Picks the most recent fulfillment that
+ * has one.
+ */
+function pickHistoricalShipment(order) {
+  const fulfillments = Array.isArray(order.fulfillments) ? order.fulfillments : [];
+  let best = null;
+  for (const f of fulfillments) {
+    const tracking = Array.isArray(f.tracking) ? f.tracking : [];
+    const withNumber = tracking.find((t) => t && t.number);
+    if (!withNumber) continue;
+    if (!best || new Date(f.createdAt) > new Date(best.createdAt)) {
+      best = {
+        createdAt: f.createdAt || null,
+        carrier: withNumber.company || null,
+        number: withNumber.number,
+        url: withNumber.url || null
+      };
+    }
+  }
+  return best;
+}
+
+/**
  * Sync orders from Shopify into shopify_orders / shopify_order_line_items.
  * Upserts by shopify_order_gid / shopify_line_item_gid so a re-sync is safe
  * to run repeatedly (manual "Sync now" button, or the interval watcher).
@@ -8460,6 +8491,23 @@ async function syncShopifyOrdersHandler(event, options = {}) {
   `);
   const getOrderId = db.prepare('SELECT id FROM shopify_orders WHERE shopify_order_gid = ?');
 
+  // GR-PLAN-006: historical-shipment backfill (see pickHistoricalShipment
+  // above). Deliberately does NOT touch quantity_printed on the order's
+  // lines - there's no real record of what was actually printed for an
+  // order shipped before Printventory existed, and inventing one would
+  // violate the project's own "never invent a product fact" rule. Only the
+  // order's own shipped/tracking state is backfilled.
+  const backfillShipped = db.prepare(`
+    UPDATE shopify_orders
+    SET local_status = 'shipped',
+        tracking_carrier = ?,
+        tracking_number = ?,
+        tracking_url = ?,
+        fulfilled_at = COALESCE(?, CURRENT_TIMESTAMP),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND local_status != 'shipped'
+  `);
+
   const upsertLineItem = db.prepare(`
     INSERT INTO shopify_order_line_items (
       order_id, shopify_line_item_gid, sku, title, variant_title,
@@ -8491,6 +8539,7 @@ async function syncShopifyOrdersHandler(event, options = {}) {
   let newOrders = 0;
   let newlyMatchedLines = 0;
   let unmatchedLines = 0;
+  let historicalShipmentsBackfilled = 0;
 
   const runSync = db.transaction((fetchedOrders) => {
     for (const order of fetchedOrders) {
@@ -8501,6 +8550,15 @@ async function syncShopifyOrdersHandler(event, options = {}) {
       );
       if (!existed) newOrders++;
       const orderRow = getOrderId.get(order.id);
+
+      const historicalShipment = pickHistoricalShipment(order);
+      if (historicalShipment) {
+        const result = backfillShipped.run(
+          historicalShipment.carrier, historicalShipment.number, historicalShipment.url,
+          historicalShipment.createdAt, orderRow.id
+        );
+        if (result.changes > 0) historicalShipmentsBackfilled++;
+      }
 
       for (const li of order.lineItems) {
         const { matchedModelId, matchedShopifyProductId, linkStatus } =
@@ -8518,14 +8576,16 @@ async function syncShopifyOrdersHandler(event, options = {}) {
 
   console.log(
     `[Shopify orders] synced ${orders.length} order(s) ` +
-    `(${newOrders} new, ${newlyMatchedLines} line(s) matched, ${unmatchedLines} unmatched)`
+    `(${newOrders} new, ${newlyMatchedLines} line(s) matched, ${unmatchedLines} unmatched, ` +
+    `${historicalShipmentsBackfilled} historical shipment(s) backfilled)`
   );
 
   const summary = {
     ordersSynced: orders.length,
     newOrders,
     newlyMatchedLines,
-    unmatchedLines
+    unmatchedLines,
+    historicalShipmentsBackfilled
   };
 
   // Notify the renderer (Orders pane badge + sync toast) - fire-and-forget,
