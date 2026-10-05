@@ -426,6 +426,26 @@
       if (linkInput) { handleComboboxActivate(linkInput); return; }
     });
 
+    // Double-clicking anywhere on a line card opens the product manager
+    // for it, as a second, consistent way in regardless of which action
+    // button the card currently shows (Open in Slicer vs. Open Product
+    // Manager) - James: "can double clicking the card open the manage
+    // dialog as well?" Skips the manual-link combobox so normal text
+    // interactions (e.g. double-click-to-select-a-word) aren't hijacked,
+    // and does nothing for a line with no resolved file yet (unmatched).
+    listEl.addEventListener('dblclick', (e) => {
+      if (e.target.closest('.order-line-combobox')) return;
+
+      const line = e.target.closest('.order-line');
+      if (!line) return;
+
+      const pathEl = line.querySelector('[data-path]');
+      const path = pathEl?.dataset.path;
+      if (!path || typeof window.openShopifyProductEditorForPath !== 'function') return;
+
+      window.openShopifyProductEditorForPath(path);
+    });
+
     listEl.addEventListener('input', (e) => {
       const input = e.target.closest('[data-action="link-model-input"]');
       if (input) handleComboboxInput(input);
