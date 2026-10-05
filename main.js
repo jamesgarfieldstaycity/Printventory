@@ -8625,9 +8625,7 @@ async function syncShopifyOrdersHandler(event, options = {}) {
 
   // Notify the renderer (Orders pane badge + sync toast) - fire-and-forget,
   // never blocks the IPC response the caller is waiting on.
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('shopify-orders-synced', summary);
-  }
+  global.sendEvent(event, 'shopify-orders-synced', summary);
 
   return summary;
 }
@@ -8808,11 +8806,9 @@ async function markOrderLineItemPrintedHandler(event, { lineItemId, quantity, du
     // (see "Order-line staleness" decision in GR-PLAN-006) so the pane
     // refreshes live with no new listener needed - the sync-count fields
     // are meaningless here and ignored by the renderer either way.
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('shopify-orders-synced', {
-        ordersSynced: 0, newOrders: 0, newlyMatchedLines: 0, unmatchedLines: 0
-      });
-    }
+    global.sendEvent(event, 'shopify-orders-synced', {
+      ordersSynced: 0, newOrders: 0, newlyMatchedLines: 0, unmatchedLines: 0
+    });
 
     return { success: true, ...result };
   } catch (error) {
@@ -8901,11 +8897,9 @@ async function shipShopifyOrderHandler(event, { orderId, carrier, trackingNumber
       WHERE id = ?
     `).run(confirmedCarrier || carrier || null, confirmedNumber || trackingNumber, confirmedUrl || trackingUrl || null, orderId);
 
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('shopify-orders-synced', {
-        ordersSynced: 0, newOrders: 0, newlyMatchedLines: 0, unmatchedLines: 0
-      });
-    }
+    global.sendEvent(event, 'shopify-orders-synced', {
+      ordersSynced: 0, newOrders: 0, newlyMatchedLines: 0, unmatchedLines: 0
+    });
 
     return { success: true };
   } catch (error) {
@@ -9561,8 +9555,8 @@ async function assignFileVariantHandler(event, folderPath, modelId, variantId, o
           reMatchedLines++;
         }
 
-        if (reMatchedLines > 0 && mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('shopify-orders-synced', {
+        if (reMatchedLines > 0) {
+          global.sendEvent(event, 'shopify-orders-synced', {
             ordersSynced: 0,
             newOrders: 0,
             newlyMatchedLines: reMatchedLines,
@@ -9623,8 +9617,8 @@ async function unassignFileVariantHandler(event, folderPath, variantId) {
           reMatchedLines++;
         }
 
-        if (reMatchedLines > 0 && mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('shopify-orders-synced', {
+        if (reMatchedLines > 0) {
+          global.sendEvent(event, 'shopify-orders-synced', {
             ordersSynced: 0,
             newOrders: 0,
             newlyMatchedLines: reMatchedLines,

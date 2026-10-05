@@ -1,6 +1,6 @@
 {
   "name": "printventory",
-  "version": "2.2.13",
+  "version": "2.2.14",
   "description": "Printventory",
   "main": "main.js",
   "scripts": {
@@ -162,6 +162,7 @@
       "pwa-icon-192.png",
       "pwa-icon-512.png",
       "apple-touch-icon.png",
+      "favicon.ico",
       "dup.png",
       "roulette.png",
       "tag.png",

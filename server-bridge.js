@@ -521,6 +521,65 @@
     'deleteShopifyProductMedia': 'delete-shopify-product-media',
     'uploadShopifyProductImages': 'upload-shopify-product-images',
     'reorderShopifyProductMedia': 'reorder-shopify-product-media',
+    // GR-PLAN-004 / GR-PLAN-006: Shopify settings, catalogue, orders & variant
+    // mapping methods added to preload.js after the original methodToChannel
+    // list was written. Without these entries here, window.electron.<method>
+    // is simply undefined in server mode even though it exists in preload.js.
+    'getShopifySettings': 'get-shopify-settings',
+    'saveShopifySettings': 'save-shopify-settings',
+    'testShopifyConnection': 'test-shopify-connection',
+    'getShopifyProductTypes': 'get-shopify-product-types',
+    'saveShopifyProductType': 'save-shopify-product-type',
+    'deleteShopifyProductType': 'delete-shopify-product-type',
+    'getShopifyCollectionCodes': 'get-shopify-collection-codes',
+    'suggestShopifyCollectionCode': 'suggest-shopify-collection-code',
+    'saveShopifyCollectionCode': 'save-shopify-collection-code',
+    'deleteShopifyCollectionCode': 'delete-shopify-collection-code',
+    'getShopifyProducts': 'get-shopify-products',
+    'getShopifyProduct': 'get-shopify-product',
+    'getShopifyProductByModel': 'get-shopify-product-by-model',
+    'saveShopifyProduct': 'save-shopify-product',
+    'deleteShopifyProduct': 'delete-shopify-product',
+    'pushToShopify': 'push-to-shopify',
+    'fetchLiveShopifyData': 'fetch-live-shopify-data',
+    'setShopifyInventory': 'set-shopify-inventory',
+    'debugShopifyDiagnostics': 'debug-shopify-diagnostics',
+    'syncShopifyOrders': 'sync-shopify-orders',
+    'getShopifyOrders': 'get-shopify-orders',
+    'linkOrderLineItem': 'link-order-line-item',
+    'getShopifyOrdersBadgeCount': 'get-shopify-orders-badge-count',
+    'markOrderLineItemPrinted': 'mark-order-line-item-printed',
+    'shipShopifyOrder': 'ship-shopify-order',
+    'getUnlinkedProducts': 'get-unlinked-products',
+    'linkToShopifyProduct': 'link-to-shopify-product',
+    'unlinkShopifyProduct': 'unlink-shopify-product',
+    'getLinkableShopifyProducts': 'get-linkable-shopify-products',
+    'linkModelToShopifyProduct': 'link-model-to-shopify-product',
+    'markAsNewProduct': 'mark-as-new-product',
+    'getSkippedFiles': 'get-skipped-files',
+    'getFolderFileVariants': 'get-folder-file-variants',
+    'assignFileVariant': 'assign-file-variant',
+    'unassignFileVariant': 'unassign-file-variant',
+    'backfillVariantMappings': 'backfill-variant-mappings',
+    'getProductVariantsWithSuggestions': 'get-product-variants-with-suggestions',
+    // Additional methods found missing from this map during the same audit
+    // (server mode feature-parity gap, same root cause as the Shopify ones above).
+    // NOTE: 'getDb' is deliberately NOT bridged - it returns a live better-sqlite3
+    // handle in desktop mode, which can't be serialized over the WebSocket.
+    'isServerMode': 'is-server-mode',
+    'reportServerThumbnailProgress': 'report-server-thumbnail-progress',
+    'reportServerThumbnailComplete': 'report-server-thumbnail-complete',
+    'reportServerThumbnailError': 'report-server-thumbnail-error',
+    'getNextSeriesNumber': 'get-next-series-number',
+    'allocateSeriesNumber': 'allocate-series-number',
+    'generateProductCode': 'generate-product-code',
+    'getProductFolderImages': 'get-product-folder-images',
+    'readImageAsBase64': 'read-image-as-base64',
+    'browseForImages': 'browse-for-images',
+    'showPhotoContextMenu': 'show-photo-context-menu',
+    'setPrimaryFile': 'set-primary-file',
+    'startExtensionServer': 'start-extension-server',
+    'stopExtensionServer': 'stop-extension-server',
     'getModelsByDesigner': 'get-models-by-designer',
     'showItemInFolder': 'show-item-in-folder',
     'openPath': 'open-path',
@@ -736,6 +795,19 @@
   
   window.electron.onRefreshGrid = function(callback) {
     window.electron.on('refresh-grid', callback);
+  };
+
+  window.electron.onOpenKeyboardShortcuts = function(callback) {
+    window.electron.on('open-keyboard-shortcuts', callback);
+  };
+
+  window.electron.onShopifyOrdersSynced = function(callback) {
+    // GR-PLAN-006: Orders pane badge + sync toast. main.js broadcasts this via
+    // global.sendEvent(), which in server mode sends {type:'event', channel, args}
+    // over the WebSocket - the summary object arrives as the first callback arg.
+    window.electron.on('shopify-orders-synced', (summary) => {
+      callback(summary);
+    });
   };
 
   window.electron.onShowParentModelDialog = function(callback) {
