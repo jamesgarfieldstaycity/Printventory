@@ -8353,9 +8353,9 @@ function matchOrderLineItem(sku, productGid, variantGid) {
   if (cleanVariantGid) {
     const assigned = db.prepare(`
       SELECT m.id AS model_id
-      FROM shopify_product_files spf
-      JOIN models m ON m.id = spf.model_id
-      WHERE spf.shopify_variant_id = ?
+      FROM shopify_variant_file_links svfl
+      JOIN models m ON m.id = svfl.model_id
+      WHERE svfl.shopify_variant_id = ?
       LIMIT 1
     `).get(cleanVariantGid);
     if (assigned) {
@@ -9177,27 +9177,34 @@ ipcHandlerRegistry.set('get-folder-file-variants', getFolderFileVariantsHandler)
  */
 async function assignFileVariantHandler(event, folderPath, modelId, variantId, optionValue) {
   try {
-    // Clear any existing assignment to this variant from OTHER models in the same folder
-    // This prevents duplicate assignments when reassigning a variant to a different file
-    const cleared = db.prepare(`
-      UPDATE shopify_product_files
-      SET shopify_variant_id = NULL, variant_option_value = NULL, updated_at = datetime('now')
-      WHERE folder_path = ? AND shopify_variant_id = ? AND model_id != ?
-    `).run(folderPath, variantId, modelId);
-
-    if (cleared.changes > 0) {
-      console.log(`[Shopify] Cleared ${cleared.changes} existing assignment(s) to variant ${optionValue || variantId}`);
-    }
-
-    // Now insert/update the new assignment
+    // One variant always resolves to exactly one file - reassigning a
+    // variant to a different file replaces its row, same as before. But a
+    // file CAN serve more than one variant now (hand-painted lines reuse
+    // one sculpt across several finishes), so this is keyed on the
+    // variant, not the file: shopify_variant_file_links.UNIQUE(folder_path,
+    // shopify_variant_id) is what enforces "one file per variant," and
+    // there is deliberately nothing stopping the same model_id appearing
+    // in several of these rows.
     db.prepare(`
-      INSERT INTO shopify_product_files (folder_path, model_id, is_primary, link_status, shopify_variant_id, variant_option_value)
-      VALUES (?, ?, 0, 'linked', ?, ?)
-      ON CONFLICT(folder_path, model_id) DO UPDATE SET
-        shopify_variant_id = ?,
-        variant_option_value = ?,
+      INSERT INTO shopify_variant_file_links (folder_path, shopify_variant_id, model_id, variant_option_value, updated_at)
+      VALUES (?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(folder_path, shopify_variant_id) DO UPDATE SET
+        model_id = excluded.model_id,
+        variant_option_value = excluded.variant_option_value,
         updated_at = datetime('now')
-    `).run(folderPath, modelId, variantId, optionValue, variantId, optionValue);
+    `).run(folderPath, variantId, modelId, optionValue);
+
+    // Still register the file in shopify_product_files so the rest of the
+    // app sees it as part of this product (is_primary/link_status) - that
+    // table no longer decides variant assignment (see above) but other
+    // code still reads it for "is this file linked to this product at all."
+    db.prepare(`
+      INSERT INTO shopify_product_files (folder_path, model_id, is_primary, link_status)
+      VALUES (?, ?, 0, 'linked')
+      ON CONFLICT(folder_path, model_id) DO UPDATE SET
+        link_status = 'linked',
+        updated_at = datetime('now')
+    `).run(folderPath, modelId);
 
     console.log(`[Shopify] Assigned variant ${optionValue || variantId} to model ${modelId}`);
     return { success: true };
@@ -9235,16 +9242,16 @@ async function getProductVariantsWithSuggestionsHandler(event, folderPath) {
       ORDER BY sv.variant_number
     `).all(product.id);
 
-    // Get all model files in this folder with their assignments and thumbnails
+    // Get all model files in this folder, with every variant currently
+    // assigned to each one (a file can back more than one variant - see
+    // shopify_variant_file_links above) and its own suggestion label.
     const files = db.prepare(`
       SELECT
         m.id,
         m.fileName,
         m.filePath,
         m.thumbnail,
-        COALESCE(spf.is_primary, 0) as isPrimary,
-        spf.shopify_variant_id as assignedVariantId,
-        spf.variant_option_value as assignedOptionValue
+        COALESCE(spf.is_primary, 0) as isPrimary
       FROM models m
       LEFT JOIN shopify_product_files spf ON spf.model_id = m.id AND spf.folder_path = ?
       WHERE REPLACE(m.filePath, CHAR(92), '/') LIKE ? || '/%'
@@ -9252,21 +9259,48 @@ async function getProductVariantsWithSuggestionsHandler(event, folderPath) {
       ORDER BY m.fileName
     `).all(folderPath, folderPath);
 
+    // variant -> assigned file, from the junction table (looked up per
+    // variant rather than per file, since one file may now serve several).
+    const variantLinks = db.prepare(`
+      SELECT shopify_variant_id, model_id FROM shopify_variant_file_links WHERE folder_path = ?
+    `).all(folderPath);
+    const modelIdByVariantId = new Map(variantLinks.map(l => [l.shopify_variant_id, l.model_id]));
+    const filesById = new Map(files.map(f => [f.id, f]));
+
+    // file -> every option_value it's currently assigned to, for the file
+    // picker's "already used for: ..." note (renderer.js) - informational,
+    // not a conflict, now that reuse across variants is expected.
+    const variantIdsByModelId = new Map();
+    for (const link of variantLinks) {
+      if (!variantIdsByModelId.has(link.model_id)) variantIdsByModelId.set(link.model_id, []);
+      variantIdsByModelId.get(link.model_id).push(link.shopify_variant_id);
+    }
+    const variantById = new Map(variants.map(v => [v.shopify_variant_id, v]));
+    for (const file of files) {
+      const usedByIds = variantIdsByModelId.get(file.id) || [];
+      file.usedByOptionValues = usedByIds
+        .map(vid => variantById.get(vid)?.option_value)
+        .filter(Boolean);
+    }
+
     // Build result with assignments and suggestions
     const variantsWithSuggestions = variants.map(variant => {
-      // Find current assignment
-      const assignedFile = files.find(f => f.assignedVariantId === variant.shopify_variant_id);
+      const assignedModelId = modelIdByVariantId.get(variant.shopify_variant_id);
+      const assignedFile = assignedModelId ? (filesById.get(assignedModelId) || null) : null;
 
-      // Compute suggestion if not assigned (using simple word matching)
+      // Compute suggestion if not assigned (using simple word matching).
+      // Deliberately does NOT skip files already assigned to another
+      // variant - James's hand-painted lines print several finish variants
+      // from the one file, so "already used elsewhere" isn't disqualifying
+      // the way it would be for a product whose variants are genuinely
+      // different sculpts/files. Still never auto-applied - confirmation
+      // is always required (see "Confirm" button in the caller).
       let suggestion = null;
       if (!assignedFile) {
         let bestMatch = null;
         let bestScore = 0;
 
         for (const file of files) {
-          // Skip already assigned files
-          if (file.assignedVariantId) continue;
-
           const score = calculateMatchScoreSimple(file.fileName, variant.option_value);
           if (score > bestScore && score >= 0.3) {
             bestScore = score;
@@ -17358,6 +17392,57 @@ function ensureShopifyTablesExist() {
         FOREIGN KEY(model_id) REFERENCES models(id) ON DELETE CASCADE,
         UNIQUE(folder_path, model_id)
     )`).run();
+
+    // Variant <-> file assignment (GR-PLAN-006, 2026-10-05). Separate from
+    // shopify_product_files above, which still tracks is_primary/link_status
+    // per file in a folder but no longer decides variant assignment. James's
+    // hand-painted lines print one sculpt in several finishes from the SAME
+    // file (e.g. "Matte Black" / "Bronze & Silver" / "Other (message me)"
+    // all from one .3mf) - shopify_product_files's UNIQUE(folder_path,
+    // model_id) made that impossible (confirming a second variant against
+    // the same file silently overwrote the first variant's assignment,
+    // since both lived in the one row keyed on that file). This table is
+    // keyed on the VARIANT instead: UNIQUE(folder_path, shopify_variant_id)
+    // means a variant always resolves to exactly one file (reassigning
+    // replaces it, same as before), but nothing stops several variants
+    // pointing at the same model_id.
+    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_variant_file_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        folder_path TEXT NOT NULL,
+        shopify_variant_id TEXT NOT NULL,
+        model_id INTEGER NOT NULL,
+        variant_option_value TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(model_id) REFERENCES models(id) ON DELETE CASCADE,
+        UNIQUE(folder_path, shopify_variant_id)
+    )`).run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_variant_file_links_model ON shopify_variant_file_links(model_id)').run();
+
+    // One-time backfill from the old per-file column into the new
+    // per-variant table, so assignments already confirmed before this
+    // change (e.g. GR-LAD-SET's variants) aren't lost. Guarded on the new
+    // table being empty so it only ever runs once - once James reassigns a
+    // variant here, the old shopify_product_files.shopify_variant_id value
+    // for that row is stale and must not be re-copied over a newer choice.
+    const variantLinksCountRow = db.prepare('SELECT COUNT(*) AS n FROM shopify_variant_file_links').get();
+    if (!variantLinksCountRow || variantLinksCountRow.n === 0) {
+      const legacyAssignments = db.prepare(`
+        SELECT folder_path, shopify_variant_id, model_id, variant_option_value
+        FROM shopify_product_files
+        WHERE shopify_variant_id IS NOT NULL
+      `).all();
+      if (legacyAssignments.length > 0) {
+        console.log(`[Shopify] Backfilling ${legacyAssignments.length} variant->file assignment(s) into shopify_variant_file_links...`);
+        const insertLink = db.prepare(`
+          INSERT OR IGNORE INTO shopify_variant_file_links (folder_path, shopify_variant_id, model_id, variant_option_value)
+          VALUES (?, ?, ?, ?)
+        `);
+        for (const row of legacyAssignments) {
+          insertLink.run(row.folder_path, row.shopify_variant_id, row.model_id, row.variant_option_value);
+        }
+      }
+    }
 
     // Series counter (ensures unique series per collection+type combination)
     db.prepare(`CREATE TABLE IF NOT EXISTS shopify_series_counter (

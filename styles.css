@@ -10393,6 +10393,20 @@ body.is-panel-resizing * {
   color: #95bf47;
 }
 
+/* Transient success/error flash on the toolbar's push-status badge -
+   visible without scrolling, unlike #shopify-editor-status at the bottom
+   of this long dialog (see pushLinkedShopifyUpdate/pushShopifyProductAsDraft
+   in renderer.js). */
+.shopify-push-badge.shopify-push-success {
+  background: rgba(0, 212, 255, 0.2);
+  color: #00d4ff;
+}
+
+.shopify-push-badge.shopify-push-error {
+  background: rgba(255, 90, 90, 0.2);
+  color: #ff5a5a;
+}
+
 /* SKU Section */
 .shopify-sku-section {
   border: 1px solid rgba(255, 255, 255, 0.15);

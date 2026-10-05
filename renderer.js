@@ -1587,7 +1587,7 @@ function showFilePickerForVariant(variantId, optionValue, files, folderPath) {
         ${files.map(f => `
           <div class="variant-file-option" data-model-id="${f.id}">
             <span class="file-option-name">${escapeHtml(f.fileName)}</span>
-            ${f.assignedVariantId ? `<span class="file-option-assigned">Assigned to: ${escapeHtml(f.assignedOptionValue || 'another variant')}</span>` : ''}
+            ${f.usedByOptionValues && f.usedByOptionValues.length ? `<span class="file-option-assigned" title="A file can back more than one variant (e.g. the same sculpt in several hand-painted finishes) - this is just letting you know, not blocking the choice.">Also used for: ${escapeHtml(f.usedByOptionValues.join(', '))}</span>` : ''}
             <button type="button" class="select-this-file-btn" data-model-id="${f.id}">Select</button>
           </div>
         `).join('')}
@@ -2261,6 +2261,22 @@ window.pushLinkedShopifyUpdate = async function pushLinkedShopifyUpdate() {
   }
 
   const statusEl = document.getElementById('shopify-editor-status');
+  // The toolbar's own badge (always visible, no scrolling needed) -
+  // #shopify-editor-status above is a <p> at the very bottom of this long,
+  // scrollable dialog, so it alone isn't enough feedback for a button that
+  // lives in the sticky toolbar at the top.
+  const pushStatusBadge = document.getElementById('shopify-editor-push-status');
+  const flashPushBadge = (text, cls, holdMs = 2500) => {
+    if (!pushStatusBadge) return;
+    const prevText = pushStatusBadge.textContent;
+    const prevClass = pushStatusBadge.className;
+    pushStatusBadge.textContent = text;
+    pushStatusBadge.className = `shopify-push-badge ${cls}`;
+    setTimeout(() => {
+      pushStatusBadge.textContent = prevText;
+      pushStatusBadge.className = prevClass;
+    }, holdMs);
+  };
   if (statusEl) statusEl.textContent = 'Pushing to Shopify...';
 
   try {
@@ -2365,6 +2381,7 @@ window.pushLinkedShopifyUpdate = async function pushLinkedShopifyUpdate() {
     }
 
     if (statusEl) statusEl.textContent = 'Successfully pushed to Shopify!';
+    flashPushBadge('\u2713 Pushed', 'shopify-push-success');
     setTimeout(() => {
       if (statusEl) statusEl.textContent = '';
     }, 3000);
@@ -2374,6 +2391,7 @@ window.pushLinkedShopifyUpdate = async function pushLinkedShopifyUpdate() {
   } catch (e) {
     console.error('Error pushing to Shopify:', e);
     if (statusEl) statusEl.textContent = `Error: ${e.message}`;
+    flashPushBadge('Push failed', 'shopify-push-error', 4000);
   }
 };
 
@@ -3070,6 +3088,16 @@ window.pushShopifyProductAsDraft = async function pushShopifyProductAsDraft() {
     if (statusEl) {
       statusEl.textContent = 'Push failed: ' + (e.message || e);
       statusEl.className = 'setting-description warning-text';
+    }
+    if (pushStatusBadge) {
+      const prevText = pushStatusBadge.textContent;
+      const prevClass = pushStatusBadge.className;
+      pushStatusBadge.textContent = 'Push failed';
+      pushStatusBadge.className = 'shopify-push-badge shopify-push-error';
+      setTimeout(() => {
+        pushStatusBadge.textContent = prevText;
+        pushStatusBadge.className = prevClass;
+      }, 4000);
     }
   } finally {
     if (pushBtn) pushBtn.disabled = false;
