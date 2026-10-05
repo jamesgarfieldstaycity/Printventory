@@ -168,6 +168,10 @@ contextBridge.exposeInMainWorld('electron', {
   // Shopify reconciliation (folder-based)
   fetchShopifyProducts: () => ipcRenderer.invoke('fetch-shopify-products'),
   debugShopifyDiagnostics: (args) => ipcRenderer.invoke('debug-shopify-diagnostics', args),
+  // GR-PLAN-006: order sync
+  syncShopifyOrders: (options) => ipcRenderer.invoke('sync-shopify-orders', options),
+  getShopifyOrders: (options) => ipcRenderer.invoke('get-shopify-orders', options),
+  linkOrderLineItem: (args) => ipcRenderer.invoke('link-order-line-item', args),
   getLinkedShopifyProductIds: () => ipcRenderer.invoke('get-linked-shopify-product-ids'),
   getUnlinkedFolders: (includeSkipped) => ipcRenderer.invoke('get-unlinked-folders', includeSkipped),
   getUnlinkedProducts: () => ipcRenderer.invoke('get-unlinked-products'), // Legacy alias

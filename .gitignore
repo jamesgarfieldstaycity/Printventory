@@ -23,6 +23,9 @@ app.log
 scripts/publish-beta-release.local.json
 scripts/.discord
 .cursor/
+.claude/
+nul
+printventory.db.bak-*
 .deploySteps
 .env
 demos/*.webm

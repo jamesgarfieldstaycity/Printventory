@@ -3251,6 +3251,7 @@ if (!gotTheLock) {
       }
       
       startExtensionInboxWatcher();
+      startShopifyOrderSyncWatcher();
 
       // Track application usage after initialization (skip in server mode; do not block ready)
       if (!isServerMode) {
@@ -8283,6 +8284,213 @@ async function fetchShopifyProductsHandler(event) {
 }
 ipcMain.handle('fetch-shopify-products', fetchShopifyProductsHandler);
 ipcHandlerRegistry.set('fetch-shopify-products', fetchShopifyProductsHandler);
+
+// --- GR-PLAN-006: order sync ---
+
+let shopifyOrderSyncTimer = null;
+let shopifyOrderSyncInFlight = false;
+const SHOPIFY_ORDER_SYNC_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes; see GR-PLAN-006 open question on interval
+
+/**
+ * Resolve a line item's SKU to a Printventory product, the same way
+ * GR-PLAN-004's reconciliation already matches: by variant SKU, joined
+ * through shopify_variants -> shopify_products -> model_id. Returns
+ * { matchedModelId, matchedShopifyProductId } (both null if no match).
+ */
+function matchOrderLineItemSku(sku) {
+  if (!sku || !String(sku).trim()) {
+    return { matchedModelId: null, matchedShopifyProductId: null };
+  }
+  const row = db.prepare(`
+    SELECT sp.id AS shopify_product_id, sp.model_id AS model_id
+    FROM shopify_variants sv
+    JOIN shopify_products sp ON sp.id = sv.product_id
+    WHERE sv.sku = ?
+    LIMIT 1
+  `).get(String(sku).trim());
+  if (!row) {
+    return { matchedModelId: null, matchedShopifyProductId: null };
+  }
+  return {
+    matchedModelId: row.model_id || null,
+    matchedShopifyProductId: row.shopify_product_id || null
+  };
+}
+
+/**
+ * Sync orders from Shopify into shopify_orders / shopify_order_line_items.
+ * Upserts by shopify_order_gid / shopify_line_item_gid so a re-sync is safe
+ * to run repeatedly (manual "Sync now" button, or the interval watcher).
+ * Never writes anything back to Shopify - read-only until the Phase C
+ * fulfillment push.
+ */
+async function syncShopifyOrdersHandler(event, options = {}) {
+  const settings = readShopifySettings();
+  if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
+    return { error: 'Shopify credentials not configured', ordersSynced: 0 };
+  }
+
+  let orders;
+  try {
+    orders = await shopifyApi.fetchOrders(settings.storeDomain, settings.clientId, settings.clientSecret, options);
+  } catch (error) {
+    // Most likely cause early on: the custom app is missing the read_orders
+    // scope (see GR-PLAN-006 prerequisites) - surface the raw message rather
+    // than guessing, so it's actionable from the error alone.
+    console.error('[Shopify orders] fetch failed:', error);
+    return { error: error.message || String(error), ordersSynced: 0 };
+  }
+
+  const upsertOrder = db.prepare(`
+    INSERT INTO shopify_orders (
+      shopify_order_gid, order_name, order_created_at, customer_name,
+      total_amount, total_currency, financial_status, fulfillment_status,
+      last_synced_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(shopify_order_gid) DO UPDATE SET
+      order_name = excluded.order_name,
+      customer_name = excluded.customer_name,
+      total_amount = excluded.total_amount,
+      total_currency = excluded.total_currency,
+      financial_status = excluded.financial_status,
+      fulfillment_status = excluded.fulfillment_status,
+      last_synced_at = CURRENT_TIMESTAMP,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+  const getOrderId = db.prepare('SELECT id FROM shopify_orders WHERE shopify_order_gid = ?');
+
+  const upsertLineItem = db.prepare(`
+    INSERT INTO shopify_order_line_items (
+      order_id, shopify_line_item_gid, sku, title, quantity_ordered,
+      matched_model_id, matched_shopify_product_id, link_status, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(order_id, shopify_line_item_gid) DO UPDATE SET
+      sku = excluded.sku,
+      title = excluded.title,
+      quantity_ordered = excluded.quantity_ordered,
+      -- Never downgrade a manual link back to auto-matched/unmatched on re-sync;
+      -- only fill in a match if this line doesn't already have one.
+      matched_model_id = CASE WHEN shopify_order_line_items.link_status = 'manually-linked'
+        THEN shopify_order_line_items.matched_model_id ELSE excluded.matched_model_id END,
+      matched_shopify_product_id = CASE WHEN shopify_order_line_items.link_status = 'manually-linked'
+        THEN shopify_order_line_items.matched_shopify_product_id ELSE excluded.matched_shopify_product_id END,
+      link_status = CASE WHEN shopify_order_line_items.link_status = 'manually-linked'
+        THEN 'manually-linked' ELSE excluded.link_status END,
+      updated_at = CURRENT_TIMESTAMP
+  `);
+
+  let newOrders = 0;
+  let newlyMatchedLines = 0;
+  let unmatchedLines = 0;
+
+  const runSync = db.transaction((fetchedOrders) => {
+    for (const order of fetchedOrders) {
+      const existed = getOrderId.get(order.id);
+      upsertOrder.run(
+        order.id, order.name, order.createdAt, order.customerName,
+        order.totalAmount, order.totalCurrency, order.financialStatus, order.fulfillmentStatus
+      );
+      if (!existed) newOrders++;
+      const orderRow = getOrderId.get(order.id);
+
+      for (const li of order.lineItems) {
+        const { matchedModelId, matchedShopifyProductId } = matchOrderLineItemSku(li.sku);
+        const linkStatus = matchedModelId ? 'auto-matched' : 'unmatched';
+        if (matchedModelId) newlyMatchedLines++; else unmatchedLines++;
+        upsertLineItem.run(
+          orderRow.id, li.id, li.sku, li.title, li.quantity,
+          matchedModelId, matchedShopifyProductId, linkStatus
+        );
+      }
+    }
+  });
+  runSync(orders);
+
+  return {
+    ordersSynced: orders.length,
+    newOrders,
+    newlyMatchedLines,
+    unmatchedLines
+  };
+}
+ipcMain.handle('sync-shopify-orders', syncShopifyOrdersHandler);
+ipcHandlerRegistry.set('sync-shopify-orders', syncShopifyOrdersHandler);
+
+/**
+ * Read synced orders + line items for the Orders pane (renderer-facing,
+ * read-only - the renderer never queries shopify_orders directly).
+ */
+async function getShopifyOrdersHandler(event, options = {}) {
+  try {
+    const orders = db.prepare(`
+      SELECT * FROM shopify_orders
+      ORDER BY order_created_at ASC
+    `).all();
+    const lineItemsStmt = db.prepare(`
+      SELECT li.*, m.filePath AS matched_file_path, m.fileName AS matched_file_name
+      FROM shopify_order_line_items li
+      LEFT JOIN models m ON m.id = li.matched_model_id
+      WHERE li.order_id = ?
+    `);
+    for (const order of orders) {
+      order.lineItems = lineItemsStmt.all(order.id);
+    }
+    return orders;
+  } catch (error) {
+    console.error('Error getting Shopify orders:', error);
+    throw error;
+  }
+}
+ipcMain.handle('get-shopify-orders', getShopifyOrdersHandler);
+ipcHandlerRegistry.set('get-shopify-orders', getShopifyOrdersHandler);
+
+/**
+ * Manually link (or re-link) an order line item to a Printventory model,
+ * for lines that didn't auto-match by SKU. Marking it 'manually-linked'
+ * also protects it from being overwritten by a later auto-match on re-sync
+ * (see syncShopifyOrdersHandler's upsertLineItem CASE logic).
+ */
+async function linkOrderLineItemHandler(event, { lineItemId, modelId }) {
+  try {
+    const model = db.prepare('SELECT id FROM models WHERE id = ?').get(modelId);
+    if (!model) return { error: 'Model not found' };
+    const shopifyProductRow = db.prepare(`
+      SELECT sp.id FROM shopify_products sp WHERE sp.model_id = ?
+      UNION
+      SELECT sp.id FROM shopify_products sp
+      JOIN models m ON REPLACE(m.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%'
+      WHERE m.id = ? AND sp.folder_path IS NOT NULL AND sp.folder_path != ''
+      LIMIT 1
+    `).get(modelId, modelId);
+    db.prepare(`
+      UPDATE shopify_order_line_items
+      SET matched_model_id = ?, matched_shopify_product_id = ?, link_status = 'manually-linked', updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(modelId, shopifyProductRow?.id || null, lineItemId);
+    return { success: true };
+  } catch (error) {
+    console.error('Error linking order line item:', error);
+    return { error: error.message || String(error) };
+  }
+}
+ipcMain.handle('link-order-line-item', linkOrderLineItemHandler);
+ipcHandlerRegistry.set('link-order-line-item', linkOrderLineItemHandler);
+
+/** Starts the background order-sync poll (manual "Sync now" always available via the IPC handler above regardless). */
+function startShopifyOrderSyncWatcher() {
+  if (shopifyOrderSyncTimer) return;
+  const runSync = () => {
+    if (shopifyOrderSyncInFlight) return;
+    shopifyOrderSyncInFlight = true;
+    syncShopifyOrdersHandler(null, {})
+      .catch((e) => console.error('[Shopify orders] sync failed:', e))
+      .finally(() => { shopifyOrderSyncInFlight = false; });
+  };
+  runSync();
+  shopifyOrderSyncTimer = setInterval(runSync, SHOPIFY_ORDER_SYNC_INTERVAL_MS);
+  if (typeof shopifyOrderSyncTimer.unref === 'function') shopifyOrderSyncTimer.unref();
+}
+
 
 /**
  * TEMPORARY diagnostic handler - not wired into any UI.
@@ -17238,6 +17446,61 @@ function ensureShopifyTablesExist() {
       }
       console.log(`Seeded ${defaultTypes.length} default product types`);
     }
+
+    // --- GR-PLAN-006: order sync tables ---
+    // One row per Shopify order. fulfillment/financial status mirror Shopify's
+    // own (read-only, refreshed on every sync); local_status is Printventory's
+    // own rollup (new / printing / printed / shipped) and is never written
+    // back to Shopify until the Phase C fulfillment push.
+    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        shopify_order_gid TEXT UNIQUE NOT NULL,
+        order_name TEXT NOT NULL,
+        order_created_at DATETIME,
+        customer_name TEXT,
+        total_amount REAL,
+        total_currency TEXT,
+        financial_status TEXT,
+        fulfillment_status TEXT,
+        local_status TEXT DEFAULT 'new',
+        tracking_carrier TEXT,
+        tracking_number TEXT,
+        tracking_url TEXT,
+        fulfilled_at DATETIME,
+        last_synced_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`).run();
+
+    // One row per order line item. matched_model_id is set once the SKU is
+    // resolved to a Printventory product (auto-matched on sync, or manually
+    // linked through the same reconciliation UI as GR-PLAN-004's folder
+    // linking). quantity_printed supports partial progress on a
+    // quantity > 1 line without a separate row per unit.
+    db.prepare(`CREATE TABLE IF NOT EXISTS shopify_order_line_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER NOT NULL,
+        shopify_line_item_gid TEXT NOT NULL,
+        sku TEXT,
+        title TEXT,
+        quantity_ordered INTEGER NOT NULL DEFAULT 1,
+        quantity_printed INTEGER NOT NULL DEFAULT 0,
+        matched_model_id INTEGER,
+        matched_shopify_product_id INTEGER,
+        link_status TEXT DEFAULT 'unmatched',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(order_id) REFERENCES shopify_orders(id) ON DELETE CASCADE,
+        FOREIGN KEY(matched_model_id) REFERENCES models(id) ON DELETE SET NULL,
+        FOREIGN KEY(matched_shopify_product_id) REFERENCES shopify_products(id) ON DELETE SET NULL,
+        UNIQUE(order_id, shopify_line_item_gid)
+    )`).run();
+
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_orders_gid ON shopify_orders(shopify_order_gid)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_orders_local_status ON shopify_orders(local_status)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_order_line_items_order_id ON shopify_order_line_items(order_id)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_order_line_items_sku ON shopify_order_line_items(sku)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_shopify_order_line_items_link_status ON shopify_order_line_items(link_status)').run();
 
     console.log('Shopify tables ensured');
     return true;
