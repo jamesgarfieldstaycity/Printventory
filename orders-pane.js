@@ -25,11 +25,18 @@
 
   // Matches Shopify's own fulfillment screen: a dropdown against Shopify's
   // recognized carrier list (so trackingInfo.company matches well enough
-  // for Shopify to auto-generate the customer's tracking link), DPD pinned
-  // first as James's actual carrier, with a free-text fallback for
-  // anything else (see GR-PLAN-006's "Shipping / fulfillment" decision -
-  // no carrier API/account integration of any kind).
-  const CARRIER_OPTIONS = ['DPD', 'Royal Mail', 'UPS', 'FedEx', 'DHL Express', 'USPS', 'Other'];
+  // for Shopify to auto-generate the customer's tracking link), DPD and An
+  // Post pinned first as James's two actual carriers ("It will mostly be
+  // An Post and DPD anyway"), with a free-text fallback for anything else
+  // (see GR-PLAN-006's "Shipping / fulfillment" decision - no carrier
+  // API/account integration of any kind). There's no Shopify API that
+  // returns this list dynamically (confirmed against Shopify's own
+  // developer forums - staff have said outright they don't have one
+  // compiled as a queryable resource), so it's maintained by hand against
+  // Shopify's published tracking_company list
+  // (https://shopify.dev/docs/api/admin-rest/latest/resources/fulfillment)
+  // rather than fetched - "An Post" is confirmed present on that list.
+  const CARRIER_OPTIONS = ['DPD', 'An Post', 'Royal Mail', 'UPS', 'FedEx', 'DHL Express', 'USPS', 'Other'];
 
   // ============================================
   // Register with PaneController
