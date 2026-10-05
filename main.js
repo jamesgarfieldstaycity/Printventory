@@ -383,9 +383,15 @@ function isUncPath(path) {
   if (!path || typeof path !== 'string') {
     return false;
   }
-  // UNC paths on Windows start with \\
-  // They cannot be local drive paths (C:\, D:\, etc.)
-  return path.startsWith('\\\\') && !/^[A-Za-z]:/.test(path);
+  // UNC paths start with two path separators - conventionally \\server\share,
+  // but Windows file I/O (and Node's fs calls on Windows) also accepts the
+  // forward-slash spelling //server/share. add-library-folder's own path
+  // normalization (main.js, which flattens \ to / for consistent storage/
+  // matching) produces exactly that form, so a UNC path typed correctly in
+  // the server-mode "Add Folder" prompt was being rejected by this check
+  // after being stored - not a typo on the user's part, a real bug here.
+  // They still cannot be local drive paths (C:\, D:\, etc.).
+  return (path.startsWith('\\\\') || path.startsWith('//')) && !/^[A-Za-z]:/.test(path);
 }
 
 // Check if running in Docker container
