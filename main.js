@@ -8387,7 +8387,7 @@ async function syncShopifyOrdersHandler(event, options = {}) {
     for (const order of fetchedOrders) {
       const existed = getOrderId.get(order.id);
       upsertOrder.run(
-        order.id, order.name, order.createdAt, order.customerName,
+        order.id, order.name, order.createdAt, order.customerName ?? null,
         order.totalAmount, order.totalCurrency, order.financialStatus, order.fulfillmentStatus
       );
       if (!existed) newOrders++;
