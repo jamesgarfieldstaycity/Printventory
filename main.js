@@ -8406,6 +8406,11 @@ async function syncShopifyOrdersHandler(event, options = {}) {
   });
   runSync(orders);
 
+  console.log(
+    `[Shopify orders] synced ${orders.length} order(s) ` +
+    `(${newOrders} new, ${newlyMatchedLines} line(s) matched, ${unmatchedLines} unmatched)`
+  );
+
   return {
     ordersSynced: orders.length,
     newOrders,
