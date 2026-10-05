@@ -13251,8 +13251,20 @@ body.server-mode .edge-tabs-container {
   width: var(--orders-pane-width, 360px);
 }
 
+/* GR-PLAN-006: when neither Tools nor Filters is pinned open, the Orders
+   pane sits at the screen's left edge - but so does .edge-tabs-container
+   (position: fixed; left: 0), which draws Tools'/Filters' own collapsed
+   edge tabs on top of it (z-index 101 vs. the pane's 100) whenever those
+   two panes are closed. James reported this clipping the pane's title,
+   sync bar, "Show shipped" toggle, and first order row. 32px clears the
+   28px-wide tab column (plus its box-shadow) without having to touch every
+   row of pane content individually - the tab column's horizontal footprint
+   is constant regardless of how many tabs are stacked in it. Only needed
+   in this specific body state: the other three #orders-pane.pane-pinned
+   rules below already shift the pane past a full pinned-open pane's width,
+   which already clears the 28px tab column with room to spare. */
 body:not(.sidebar-pinned):not(.filters-pane-pinned) #orders-pane.pane-pinned {
-  left: 0 !important;
+  left: 32px !important;
 }
 
 body.sidebar-pinned:not(.filters-pane-pinned) #orders-pane.pane-pinned {
