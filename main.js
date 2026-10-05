@@ -8411,12 +8411,20 @@ async function syncShopifyOrdersHandler(event, options = {}) {
     `(${newOrders} new, ${newlyMatchedLines} line(s) matched, ${unmatchedLines} unmatched)`
   );
 
-  return {
+  const summary = {
     ordersSynced: orders.length,
     newOrders,
     newlyMatchedLines,
     unmatchedLines
   };
+
+  // Notify the renderer (Orders pane badge + sync toast) - fire-and-forget,
+  // never blocks the IPC response the caller is waiting on.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('shopify-orders-synced', summary);
+  }
+
+  return summary;
 }
 ipcMain.handle('sync-shopify-orders', syncShopifyOrdersHandler);
 ipcHandlerRegistry.set('sync-shopify-orders', syncShopifyOrdersHandler);
@@ -8448,6 +8456,33 @@ async function getShopifyOrdersHandler(event, options = {}) {
 }
 ipcMain.handle('get-shopify-orders', getShopifyOrdersHandler);
 ipcHandlerRegistry.set('get-shopify-orders', getShopifyOrdersHandler);
+
+/**
+ * Cheap count query for the Orders pane's edge-tab badge - avoids pulling
+ * every order + line item (getShopifyOrdersHandler) just to show a number.
+ * "Needs attention" for Phase A = any open order (local_status not yet
+ * printed/shipped - Phase B/C aren't built, so today that's every synced
+ * order) plus a separate unmatched-line count so the badge can flag
+ * reconciliation work distinctly from "ready to print".
+ */
+async function getShopifyOrdersBadgeCountHandler() {
+  try {
+    const openOrders = db.prepare(`
+      SELECT COUNT(*) AS c FROM shopify_orders
+      WHERE local_status NOT IN ('printed', 'shipped')
+    `).get().c;
+    const unmatchedLines = db.prepare(`
+      SELECT COUNT(*) AS c FROM shopify_order_line_items
+      WHERE link_status = 'unmatched'
+    `).get().c;
+    return { openOrders, unmatchedLines };
+  } catch (error) {
+    console.error('Error getting Shopify orders badge count:', error);
+    return { openOrders: 0, unmatchedLines: 0 };
+  }
+}
+ipcMain.handle('get-shopify-orders-badge-count', getShopifyOrdersBadgeCountHandler);
+ipcHandlerRegistry.set('get-shopify-orders-badge-count', getShopifyOrdersBadgeCountHandler);
 
 /**
  * Manually link (or re-link) an order line item to a Printventory model,

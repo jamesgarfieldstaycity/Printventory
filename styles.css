@@ -5,6 +5,7 @@ html {
   --folder-tree-width: 280px;
   --toolbar-height: 56px;
   --filters-pane-width: 320px;
+  --orders-pane-width: 360px;
 }
 
 body {
@@ -321,6 +322,25 @@ body.sidebar-pinned.filters-pane-pinned .main-content {
 
 body.sidebar-pinned.folder-rail-open:not(.filters-pane-pinned) .main-content {
   margin-left: calc(var(--sidebar-width, 320px) + var(--folder-rail-width, 0px));
+}
+
+/* GR-PLAN-006: Orders pane main-content offsets. Higher selector specificity
+   (3 classes vs. 2) than the combos above guarantees these win whenever
+   orders-pane is also pinned, regardless of stylesheet order. */
+body.orders-pane-pinned:not(.sidebar-pinned):not(.filters-pane-pinned) .main-content {
+  margin-left: var(--orders-pane-width, 360px);
+}
+
+body.sidebar-pinned.orders-pane-pinned:not(.filters-pane-pinned) .main-content {
+  margin-left: calc(var(--sidebar-width, 320px) + var(--orders-pane-width, 360px));
+}
+
+body.filters-pane-pinned.orders-pane-pinned:not(.sidebar-pinned) .main-content {
+  margin-left: calc(var(--filters-pane-width, 320px) + var(--orders-pane-width, 360px));
+}
+
+body.sidebar-pinned.filters-pane-pinned.orders-pane-pinned .main-content {
+  margin-left: calc(var(--sidebar-width, 320px) + var(--filters-pane-width, 320px) + var(--orders-pane-width, 360px));
 }
 
 /* ============================================
@@ -12835,6 +12855,12 @@ body.is-panel-resizing * {
   border-left: 3px solid #ff9f4a; /* Orange accent for Filters */
 }
 
+#orders-pane-edge-tab {
+  order: 3;
+  border-left: 3px solid #4ade80; /* Green accent for Orders */
+  position: relative; /* anchor for the badge */
+}
+
 .edge-tab.active {
   background: rgba(74, 158, 255, 0.2);
   border-color: rgba(74, 158, 255, 0.4);
@@ -13153,6 +13179,246 @@ body.server-mode .dockable-pane {
 
 body.server-mode .edge-tabs-container {
   top: calc(30px + var(--toolbar-height, 56px) + 20px);
+}
+
+/* GR-PLAN-006: Orders pane - own width (base .dockable-pane defaults to
+   --filters-pane-width, which only coincidentally matches the first pane
+   that used this shared class) and left-offset stacking, mirroring the
+   filters-pane combos above. */
+#orders-pane {
+  width: var(--orders-pane-width, 360px);
+}
+
+body:not(.sidebar-pinned):not(.filters-pane-pinned) #orders-pane.pane-pinned {
+  left: 0 !important;
+}
+
+body.sidebar-pinned:not(.filters-pane-pinned) #orders-pane.pane-pinned {
+  left: var(--sidebar-width, 320px) !important;
+}
+
+body.filters-pane-pinned:not(.sidebar-pinned) #orders-pane.pane-pinned {
+  left: var(--filters-pane-width, 320px) !important;
+}
+
+body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
+  left: calc(var(--sidebar-width, 320px) + var(--filters-pane-width, 320px)) !important;
+}
+
+#orders-pane.pane-autohide.pane-revealed {
+  left: 0 !important;
+  z-index: 102;
+}
+
+#orders-pane .pane-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Orders pane: sync bar (last-synced timestamp + manual Sync now button) */
+.orders-sync-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.orders-sync-bar button {
+  background: rgba(74, 222, 128, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  white-space: nowrap;
+}
+
+.orders-sync-bar button:hover:not(:disabled) {
+  background: rgba(74, 222, 128, 0.25);
+}
+
+.orders-sync-bar button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Order card */
+.order-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.order-card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.order-card-name {
+  font-weight: 600;
+  color: #fff;
+  font-size: 13px;
+}
+
+.order-card-customer {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: 8px;
+}
+
+.order-card-meta {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.order-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.order-line-thumb {
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.order-line-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.order-line-title {
+  font-size: 12px;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-line-qty {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.order-line-unmatched {
+  border: 1px dashed rgba(255, 180, 70, 0.4);
+}
+
+.order-line-unmatched .order-line-title {
+  color: #ffb446;
+}
+
+.order-line-print-btn {
+  flex-shrink: 0;
+  background: rgba(74, 158, 255, 0.15);
+  color: #4a9eff;
+  border: 1px solid rgba(74, 158, 255, 0.3);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.order-line-print-btn:hover {
+  background: rgba(74, 158, 255, 0.25);
+}
+
+.order-line-link-select {
+  flex-shrink: 0;
+  max-width: 140px;
+  font-size: 11px;
+  background: rgba(30, 30, 46, 0.9);
+  color: #fff;
+  border: 1px solid rgba(255, 180, 70, 0.4);
+  border-radius: 6px;
+  padding: 3px 4px;
+}
+
+.orders-empty-state {
+  text-align: center;
+  padding: 32px 16px;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 13px;
+}
+
+/* Edge-tab badge (GR-PLAN-006: "needs attention" count for the Orders pane) */
+.edge-tab-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #4ade80;
+  color: #0a0a12;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  box-shadow: 0 0 0 2px rgba(30, 30, 46, 0.95);
+}
+
+.edge-tab-badge.has-unmatched {
+  background: #ffb446;
+}
+
+.edge-tab-badge.hidden,
+.edge-tab-badge:empty {
+  display: none;
+}
+
+/* Sync toast (GR-PLAN-006: transient, auto-dismissing, no click required) */
+.orders-sync-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(16px);
+  background: rgba(30, 30, 46, 0.98);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  border-radius: 10px;
+  padding: 10px 18px;
+  color: #fff;
+  font-size: 13px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 200;
+}
+
+.orders-sync-toast.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 /* Filters Pane specific styles */

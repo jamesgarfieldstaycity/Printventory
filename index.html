@@ -1953,7 +1953,37 @@
       <span class="edge-tab-icon">⚙</span>
       <span class="edge-tab-label">Filters</span>
     </div>
+    <div id="orders-pane-edge-tab" class="edge-tab hidden" role="button" tabindex="0" aria-label="Show Orders" data-pane="orders">
+      <span class="edge-tab-icon">📦</span>
+      <span class="edge-tab-label">Orders</span>
+      <span id="orders-edge-tab-badge" class="edge-tab-badge hidden"></span>
+    </div>
   </div>
+
+  <!-- Orders Pane (dockable) - GR-PLAN-006 -->
+  <aside id="orders-pane" class="dockable-pane pane-closed" role="complementary" aria-label="Orders">
+    <div class="pane-header">
+      <span class="pane-title">Orders</span>
+      <div class="pane-header-actions">
+        <button type="button" class="pane-pin-btn icon-button" title="Pin open" aria-pressed="false">
+          <span class="pin-icon-unpinned">📌</span>
+          <span class="pin-icon-pinned">📍</span>
+        </button>
+        <button type="button" class="pane-close-btn icon-button" title="Close" aria-label="Close orders pane">×</button>
+      </div>
+    </div>
+    <div class="pane-content">
+      <div class="orders-sync-bar">
+        <span id="orders-last-synced">Not synced yet</span>
+        <button type="button" id="orders-sync-now-btn">Sync now</button>
+      </div>
+      <div id="orders-list"></div>
+    </div>
+    <div id="orders-pane-resize-handle" class="panel-resize-handle" role="separator" aria-orientation="vertical" aria-label="Resize orders pane" title="Drag to resize orders pane"></div>
+  </aside>
+
+  <!-- Orders sync toast (GR-PLAN-006) -->
+  <div id="orders-sync-toast" class="orders-sync-toast" role="status" aria-live="polite"></div>
 
   <!-- Filters Pane (dockable) -->
   <aside id="filters-pane" class="dockable-pane pane-pinned" role="complementary" aria-label="Filters">
@@ -3337,6 +3367,7 @@ docker run -d --name printventory-server -p 5000:5000 -v printventory-data:/root
   <script src="pane-controller.js"></script>
   <script src="sidebar-layout.js"></script>
   <script src="filters-pane.js"></script>
+  <script src="orders-pane.js"></script>
   <script src="toolbar-sync.js"></script>
   <script src="folder-tree.js"></script>
   <script src="step-assembly.js"></script>
