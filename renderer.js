@@ -1454,7 +1454,21 @@ async function populateVariantAssignments() {
           </div>
           <div class="variant-file-assignment">
             ${hasAssignment ? `
-              <span class="assigned-file" title="${escapeHtml(variant.assignedFile.filePath)}">${escapeHtml(variant.assignedFile.fileName)}</span>
+              <div class="assigned-file-info">
+                <span class="assigned-file" title="${escapeHtml(variant.assignedFile.filePath)}">${escapeHtml(variant.assignedFile.fileName)}</span>
+                ${(() => {
+                  // A file can back more than one hand-painted finish - show
+                  // that persistently here, not just in the one-time picker
+                  // modal, since that's the only reliable place to notice it
+                  // after the fact. Exclude this row's own option value from
+                  // the "also used for" list.
+                  const others = (variant.assignedFile.usedByOptionValues || [])
+                    .filter(v => v && v !== variant.option_value);
+                  return others.length
+                    ? `<span class="also-used-note" title="This file is also assigned to: ${escapeHtml(others.join(', '))} - this is expected when one sculpt is painted in several finishes.">Also used for: ${escapeHtml(others.join(', '))}</span>`
+                    : '';
+                })()}
+              </div>
               <div class="variant-buttons">
                 <button type="button" class="variant-action-btn replace-file-btn" data-variant-id="${variant.shopify_variant_id}" data-option-value="${escapeHtml(variant.option_value || '')}">Replace</button>
                 <button type="button" class="variant-action-btn open-file-btn" data-file-path="${escapeHtml(variant.assignedFile.filePath)}" title="Open in slicer">Open</button>

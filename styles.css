@@ -11473,11 +11473,27 @@ body.is-panel-resizing * {
   justify-content: flex-end;
 }
 
-.assigned-file {
+.assigned-file-info {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.assigned-file {
   min-width: 0;
   font-size: 11px;
   color: #96bf48;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.also-used-note {
+  min-width: 0;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

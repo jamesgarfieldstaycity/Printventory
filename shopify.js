@@ -637,13 +637,35 @@ async function deleteProductMedia(storeDomain, clientId, clientSecret, productId
 
   if (data.productDeleteMedia.mediaUserErrors?.length > 0) {
     const errors = data.productDeleteMedia.mediaUserErrors;
-    console.error('[Shopify] productDeleteMedia errors:', errors);
-    throw new Error(errors.map(e => `${e.field}: ${e.message}`).join('; '));
+
+    // "Media ids ... do not exist" means the photo is already gone from
+    // Shopify - exactly the end state a delete was trying to reach, so
+    // treat it as a no-op rather than a failure. Seen in practice when the
+    // local photo baseline is stale (e.g. a prior push's delete step
+    // succeeded but a LATER step in that same push failed, so the overall
+    // push reported failure and never got to refreshLiveShopifyData() to
+    // reset the baseline - the next push then retries deleting media that
+    // is already deleted). A genuinely different error (permissions, the
+    // product's last image, etc.) still throws as before.
+    const alreadyGoneErrors = errors.filter(e => /do not exist/i.test(e.message || ''));
+    const otherErrors = errors.filter(e => !/do not exist/i.test(e.message || ''));
+
+    if (alreadyGoneErrors.length > 0) {
+      console.warn('[Shopify] productDeleteMedia: some media IDs were already gone (not treated as a failure):', alreadyGoneErrors);
+    }
+    if (otherErrors.length > 0) {
+      console.error('[Shopify] productDeleteMedia errors:', otherErrors);
+      throw new Error(otherErrors.map(e => `${e.field}: ${e.message}`).join('; '));
+    }
   }
 
   return {
     success: true,
-    deletedIds: data.productDeleteMedia.deletedMediaIds || []
+    // Shopify only lists IDs it actually deleted this call in
+    // deletedMediaIds - if everything requested was already gone (so
+    // nothing needed deleting), fall back to the full requested list so the
+    // caller still sees its target state achieved.
+    deletedIds: data.productDeleteMedia.deletedMediaIds?.length ? data.productDeleteMedia.deletedMediaIds : mediaIds
   };
 }
 

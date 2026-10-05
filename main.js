@@ -9207,6 +9207,49 @@ async function assignFileVariantHandler(event, folderPath, modelId, variantId, o
     `).run(folderPath, modelId);
 
     console.log(`[Shopify] Assigned variant ${optionValue || variantId} to model ${modelId}`);
+
+    // A variant's file assignment just changed, but any already-synced
+    // order lines for this variant still carry whatever link_status/
+    // matched_model_id they got from the last full Shopify sync -
+    // nothing re-runs matchOrderLineItem() locally otherwise, so the
+    // Orders pane's "Open Product Manager" / "Open in Slicer" button
+    // stays stale until the next remote sync. Re-match affected lines now
+    // and tell the renderer, the same way syncShopifyOrdersHandler does.
+    let reMatchedLines = 0;
+    try {
+      const affectedLines = db.prepare(`
+        SELECT id, sku, shopify_product_gid, shopify_variant_gid
+        FROM shopify_order_line_items
+        WHERE shopify_variant_gid = ? AND link_status != 'manually-linked'
+      `).all(variantId);
+
+      if (affectedLines.length > 0) {
+        const updateLine = db.prepare(`
+          UPDATE shopify_order_line_items
+          SET matched_model_id = ?, matched_shopify_product_id = ?, link_status = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `);
+        for (const line of affectedLines) {
+          const { matchedModelId, matchedShopifyProductId, linkStatus } =
+            matchOrderLineItem(line.sku, line.shopify_product_gid, line.shopify_variant_gid);
+          updateLine.run(matchedModelId ?? null, matchedShopifyProductId ?? null, linkStatus, line.id);
+          reMatchedLines++;
+        }
+
+        if (reMatchedLines > 0 && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('shopify-orders-synced', {
+            ordersSynced: 0,
+            newOrders: 0,
+            newlyMatchedLines: reMatchedLines,
+            unmatchedLines: 0
+          });
+        }
+      }
+    } catch (reMatchError) {
+      // Never let order-line re-matching break the variant assignment itself.
+      console.error('Error re-matching order lines after variant assignment:', reMatchError);
+    }
+
     return { success: true };
   } catch (error) {
     console.error('Error assigning file variant:', error);
