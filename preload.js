@@ -197,6 +197,8 @@ contextBridge.exposeInMainWorld('electron', {
   getFolderFileVariants: (folderPath) => ipcRenderer.invoke('get-folder-file-variants', folderPath),
   assignFileVariant: (folderPath, modelId, variantId, optionValue) =>
     ipcRenderer.invoke('assign-file-variant', folderPath, modelId, variantId, optionValue),
+  unassignFileVariant: (folderPath, variantId) =>
+    ipcRenderer.invoke('unassign-file-variant', folderPath, variantId),
   backfillVariantMappings: () => ipcRenderer.invoke('backfill-variant-mappings'),
   getProductVariantsWithSuggestions: (folderPath) => ipcRenderer.invoke('get-product-variants-with-suggestions', folderPath),
   setPrimaryFile: (folderPath, modelId) => ipcRenderer.invoke('set-primary-file', folderPath, modelId),

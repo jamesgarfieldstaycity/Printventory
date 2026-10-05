@@ -1260,6 +1260,7 @@ window.refreshLiveShopifyData = async function refreshLiveShopifyData() {
     const tagsInput = document.getElementById('shopify-live-tags');
     if (tagsInput) {
       tagsInput.value = Array.isArray(shopify.tags) ? shopify.tags.join(', ') : (shopify.tags || '');
+      updateTagCount(tagsInput, 'live-tags-count');
     }
 
     // Populate SEO fields
@@ -1472,6 +1473,7 @@ async function populateVariantAssignments() {
               <div class="variant-buttons">
                 <button type="button" class="variant-action-btn replace-file-btn" data-variant-id="${variant.shopify_variant_id}" data-option-value="${escapeHtml(variant.option_value || '')}">Replace</button>
                 <button type="button" class="variant-action-btn open-file-btn" data-file-path="${escapeHtml(variant.assignedFile.filePath)}" title="Open in slicer">Open</button>
+                <button type="button" class="variant-action-btn unlink-file-btn" data-variant-id="${variant.shopify_variant_id}" data-option-value="${escapeHtml(variant.option_value || '')}" title="Remove this file assignment">Unlink</button>
               </div>
             ` : hasSuggestion ? `
               <span class="suggested-file">
@@ -1575,6 +1577,28 @@ function attachVariantAssignmentHandlers(container, data, folderPath, countEl) {
       } catch (err) {
         console.error('Error opening file:', err);
         alert('Failed to open file: ' + err.message);
+      }
+    });
+  });
+
+  // Unlink file button - removes the confirmed assignment entirely,
+  // distinct from Replace (which immediately opens the picker for a new
+  // file). Confirms first since it's a destructive action.
+  container.querySelectorAll('.unlink-file-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const variantId = btn.dataset.variantId;
+      const optionValue = btn.dataset.optionValue || 'this variant';
+      if (!confirm(`Remove the file assignment for "${optionValue}"?\n\nIt will go back to unassigned (or suggested, if a likely file is found) until you confirm one again.`)) {
+        return;
+      }
+      try {
+        await window.electron.unassignFileVariant(folderPath, variantId);
+        await populateVariantAssignments(); // Refresh UI
+      } catch (err) {
+        console.error('Error unlinking variant:', err);
+        alert('Failed to unlink variant: ' + err.message);
       }
     });
   });
@@ -2215,6 +2239,60 @@ function initShopifySeoCounters() {
     if (inputEl) {
       inputEl.addEventListener('input', () => updateCharCount(inputEl, count, max));
       updateCharCount(inputEl, count, max);
+    }
+  });
+
+  initShopifyTagCounters();
+}
+
+// Etsy's own listing limits - 13 tags max, 20 characters each (confirmed
+// against Etsy's help docs, not assumed). Shopify itself has no tag-count
+// limit, but James wants the editor to flag this constraint since the
+// products this app manages are the same listings on Etsy too.
+const ETSY_MAX_TAGS = 13;
+const ETSY_MAX_TAG_LENGTH = 20;
+
+/**
+ * Update the tag count display for a comma-separated Tags field, flagging
+ * both too many tags and any individual tag over Etsy's 20-character limit.
+ */
+function updateTagCount(input, countElId) {
+  const countEl = document.getElementById(countElId);
+  if (!countEl || !input) return;
+
+  const tags = (input.value || '')
+    .split(',')
+    .map(t => t.trim())
+    .filter(t => t.length > 0);
+
+  const tooLong = tags.filter(t => t.length > ETSY_MAX_TAG_LENGTH);
+  const overCount = tags.length > ETSY_MAX_TAGS;
+
+  countEl.textContent = `${tags.length}/${ETSY_MAX_TAGS} tags`;
+
+  if (overCount || tooLong.length > 0) {
+    countEl.style.color = '#ff6b6b';
+    const reasons = [];
+    if (overCount) reasons.push(`${tags.length} tags exceeds Etsy's limit of ${ETSY_MAX_TAGS}`);
+    if (tooLong.length > 0) reasons.push(`over ${ETSY_MAX_TAG_LENGTH} characters: ${tooLong.join(', ')}`);
+    countEl.title = reasons.join(' - ');
+  } else {
+    countEl.style.color = '';
+    countEl.title = `Etsy allows a maximum of ${ETSY_MAX_TAGS} tags per listing, ${ETSY_MAX_TAG_LENGTH} characters each - worth staying within that limit if this same product is also listed there.`;
+  }
+}
+
+function initShopifyTagCounters() {
+  const fields = [
+    { input: 'shopify-live-tags', count: 'live-tags-count' },
+    { input: 'shopify-product-tags', count: 'new-tags-count' }
+  ];
+
+  fields.forEach(({ input, count }) => {
+    const inputEl = document.getElementById(input);
+    if (inputEl) {
+      inputEl.addEventListener('input', () => updateTagCount(inputEl, count));
+      updateTagCount(inputEl, count);
     }
   });
 }

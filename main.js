@@ -7441,6 +7441,41 @@ async function fetchLiveShopifyDataHandler(event, localProductId) {
       product.shopify_product_id
     );
 
+    // Keep the local shopify_variants mirror in sync with live Shopify
+    // data on every refresh, not just at initial link time. The plain
+    // Variants table renders straight from shopifyData.variants (always
+    // fresh), but the Variant Assignments dialog reads this local table -
+    // so a rename or a newly added variant done directly in the Shopify
+    // admin (the recommended path for that today) never reached that
+    // dialog until some separate backfill ran. Same delete+reinsert
+    // pattern used at initial-link and in the manual backfill tool - safe
+    // because shopify_variant_file_links keys on the Shopify variant gid
+    // string, not this table's local row id, so re-inserting doesn't
+    // disturb any existing file assignments.
+    try {
+      db.prepare('DELETE FROM shopify_variants WHERE product_id = ?').run(product.id);
+      const insertVariant = db.prepare(`
+        INSERT INTO shopify_variants (product_id, variant_number, option_value, sku, price, compare_at_price, inventory_quantity, shopify_variant_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      let variantNum = 1;
+      for (const variant of (shopifyData.variants || [])) {
+        insertVariant.run(
+          product.id,
+          variantNum++,
+          variant.optionValue || variant.title || `Variant ${variantNum}`,
+          variant.sku || null,
+          variant.price ? parseFloat(variant.price) : null,
+          variant.compareAtPrice ? parseFloat(variant.compareAtPrice) : null,
+          variant.inventoryQuantity ?? null,
+          variant.id
+        );
+      }
+    } catch (syncError) {
+      // Never let the local mirror sync break the live data view itself.
+      console.error('Error syncing shopify_variants from live data:', syncError);
+    }
+
     return {
       localProduct: product,
       shopifyData: shopifyData
@@ -9258,6 +9293,67 @@ async function assignFileVariantHandler(event, folderPath, modelId, variantId, o
 }
 ipcMain.handle('assign-file-variant', assignFileVariantHandler);
 ipcHandlerRegistry.set('assign-file-variant', assignFileVariantHandler);
+
+/**
+ * Remove a variant's confirmed file assignment entirely (not a replace -
+ * the variant goes back to unassigned/suggested, same as it was before
+ * ever being confirmed). James: "I should be able to unlink files
+ * completely as well as replace."
+ */
+async function unassignFileVariantHandler(event, folderPath, variantId) {
+  try {
+    db.prepare(`
+      DELETE FROM shopify_variant_file_links WHERE folder_path = ? AND shopify_variant_id = ?
+    `).run(folderPath, variantId);
+
+    console.log(`[Shopify] Unlinked variant ${variantId} from its file`);
+
+    // Same order-line re-match/live-refresh as assignFileVariantHandler,
+    // so a line that was auto-matched via this assignment falls back
+    // correctly instead of continuing to point at a file that's no longer
+    // this variant's confirmed assignment.
+    let reMatchedLines = 0;
+    try {
+      const affectedLines = db.prepare(`
+        SELECT id, sku, shopify_product_gid, shopify_variant_gid
+        FROM shopify_order_line_items
+        WHERE shopify_variant_gid = ? AND link_status != 'manually-linked'
+      `).all(variantId);
+
+      if (affectedLines.length > 0) {
+        const updateLine = db.prepare(`
+          UPDATE shopify_order_line_items
+          SET matched_model_id = ?, matched_shopify_product_id = ?, link_status = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `);
+        for (const line of affectedLines) {
+          const { matchedModelId, matchedShopifyProductId, linkStatus } =
+            matchOrderLineItem(line.sku, line.shopify_product_gid, line.shopify_variant_gid);
+          updateLine.run(matchedModelId ?? null, matchedShopifyProductId ?? null, linkStatus, line.id);
+          reMatchedLines++;
+        }
+
+        if (reMatchedLines > 0 && mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('shopify-orders-synced', {
+            ordersSynced: 0,
+            newOrders: 0,
+            newlyMatchedLines: reMatchedLines,
+            unmatchedLines: 0
+          });
+        }
+      }
+    } catch (reMatchError) {
+      console.error('Error re-matching order lines after variant unlink:', reMatchError);
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error unassigning file variant:', error);
+    throw error;
+  }
+}
+ipcMain.handle('unassign-file-variant', unassignFileVariantHandler);
+ipcHandlerRegistry.set('unassign-file-variant', unassignFileVariantHandler);
 
 /**
  * Get product variants with file suggestions (variant-first approach).

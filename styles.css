@@ -11574,6 +11574,16 @@ body.is-panel-resizing * {
   background: rgba(59, 130, 246, 0.3);
 }
 
+.variant-action-btn.unlink-file-btn {
+  background: rgba(255, 90, 90, 0.12);
+  color: #ff5a5a;
+  border: 1px solid rgba(255, 90, 90, 0.25);
+}
+
+.variant-action-btn.unlink-file-btn:hover {
+  background: rgba(255, 90, 90, 0.22);
+}
+
 /* File Picker Modal */
 .variant-file-picker-overlay {
   position: fixed;
