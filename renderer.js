@@ -2903,6 +2903,19 @@ function setupShopifyPhotoDragDrop(gridEl) {
  * Remove a photo from the list.
  */
 window.removeShopifyPhoto = function removeShopifyPhoto(index) {
+  const photo = window._shopifyEditorContext.photos[index];
+  if (!photo) return;
+
+  // Removing here only unstages the photo locally until Push to Shopify is
+  // clicked (computePhotoDiff/deleteProductMedia then actually delete it
+  // from the live product) - confirm first so a stray click on the small
+  // X button doesn't silently drop a photo, especially one already live on
+  // Shopify.
+  const message = photo.isShopifyImage
+    ? `Remove "${photo.filename}"?\n\nIt will stay removed from this list, and will be deleted from the live Shopify listing the next time you push.`
+    : `Remove "${photo.filename}" from this list?\n\nThe file itself is not deleted from the product folder.`;
+  if (!confirm(message)) return;
+
   window._shopifyEditorContext.photos.splice(index, 1);
   window._shopifyEditorContext.photosModified = true; // Mark as modified for diff
   window.renderShopifyPhotoGrid();
