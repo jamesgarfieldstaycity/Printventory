@@ -19,6 +19,9 @@
   let ordersListLoaded = false;
   let toastTimeout = null;
   let showShipped = false; // "Show shipped" toggle - hidden by default, see getShopifyOrdersHandler
+  let allOrdersCache = []; // last full fetch (always includeShipped:true - see renderOrdersList) - showShipped/search filter this in-memory rather than refetching
+  let searchQuery = ''; // "find fulfilled orders" (James) - overrides showShipped while non-empty, see getVisibleOrders
+  let searchDebounceTimeout = null;
 
   // Matches Shopify's own fulfillment screen: a dropdown against Shopify's
   // recognized carrier list (so trackingInfo.company matches well enough
@@ -332,21 +335,63 @@
     listEl.scrollTop = state.scrollTop;
   }
 
-  async function renderOrdersList() {
+  function orderMatchesSearch(order, q) {
+    if ((order.order_name || '').toLowerCase().includes(q)) return true;
+    if ((order.customer_name || '').toLowerCase().includes(q)) return true;
+    return (order.lineItems || []).some((li) =>
+      (li.title || '').toLowerCase().includes(q) ||
+      (li.sku || '').toLowerCase().includes(q) ||
+      (li.variant_title || '').toLowerCase().includes(q)
+    );
+  }
+
+  /**
+   * James: "it would be good to add a search to this pane as well to find
+   * fulfilled orders" - a search deliberately searches across EVERYTHING
+   * (open and shipped alike) regardless of the "Show shipped" toggle,
+   * since the whole point is finding an order the default view is
+   * currently hiding. The toggle only governs what shows when there's no
+   * active search.
+   */
+  function getVisibleOrders() {
+    const q = searchQuery.trim().toLowerCase();
+    if (q) return allOrdersCache.filter((o) => orderMatchesSearch(o, q));
+    return showShipped ? allOrdersCache : allOrdersCache.filter((o) => o.local_status !== 'shipped');
+  }
+
+  function renderVisibleOrders() {
     const listEl = document.getElementById('orders-list');
     if (!listEl) return;
     const uiState = captureListUiState(listEl);
-    listEl.innerHTML = '<div class="orders-empty-state">Loading…</div>';
-    try {
-      const orders = await window.electron.getShopifyOrders({ includeShipped: showShipped });
-      if (!orders || !orders.length) {
+    const orders = getVisibleOrders();
+    if (!orders.length) {
+      if (searchQuery.trim()) {
+        listEl.innerHTML = '<div class="orders-empty-state">No orders match your search.</div>';
+      } else {
         listEl.innerHTML = showShipped
           ? '<div class="orders-empty-state">No orders yet.</div>'
           : '<div class="orders-empty-state">No open orders. New orders will appear here after the next sync.</div>';
-        return;
       }
-      listEl.innerHTML = orders.map(renderOrderCard).join('');
-      restoreListUiState(listEl, uiState);
+      return;
+    }
+    listEl.innerHTML = orders.map(renderOrderCard).join('');
+    restoreListUiState(listEl, uiState);
+  }
+
+  async function renderOrdersList() {
+    const listEl = document.getElementById('orders-list');
+    if (!listEl) return;
+    try {
+      // Always fetch the full set (open + shipped) and cache it - the
+      // showShipped toggle and the search box both filter this in-memory
+      // afterwards (getVisibleOrders) rather than triggering another
+      // round trip to the DB. Deliberately doesn't blank the list to a
+      // "Loading..." placeholder first: renderVisibleOrders captures/
+      // restores scroll + ship-panel state from whatever is currently
+      // rendered, so clearing it here first would throw that state away
+      // before it can be read.
+      allOrdersCache = await window.electron.getShopifyOrders({ includeShipped: true });
+      renderVisibleOrders();
     } catch (e) {
       console.error('[OrdersPane] Failed to load orders:', e);
       listEl.innerHTML = '<div class="orders-empty-state">Could not load orders.</div>';
@@ -359,7 +404,23 @@
     checkbox.dataset.bound = '1';
     checkbox.addEventListener('change', () => {
       showShipped = checkbox.checked;
-      if (ordersListLoaded) renderOrdersList();
+      if (ordersListLoaded) renderVisibleOrders();
+    });
+  }
+
+  function bindOrdersSearchInput() {
+    const input = document.getElementById('orders-search-input');
+    if (!input || input.dataset.bound) return;
+    input.dataset.bound = '1';
+    input.addEventListener('input', () => {
+      searchQuery = input.value;
+      clearTimeout(searchDebounceTimeout);
+      // Filters the already-cached data in-memory - debounced only to
+      // avoid a full re-render (and its restoreListUiState pass) on every
+      // single keystroke, not to avoid a network/DB round trip.
+      searchDebounceTimeout = setTimeout(() => {
+        if (ordersListLoaded) renderVisibleOrders();
+      }, 120);
     });
   }
 
@@ -857,6 +918,7 @@
     bindListEvents();
     bindSyncButton();
     bindShowShippedToggle();
+    bindOrdersSearchInput();
     bindSyncedEvent();
     bindPaneOpenRefresh();
     refreshBadge();

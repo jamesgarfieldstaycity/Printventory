@@ -13326,6 +13326,31 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
 
 /* Orders pane: "Show shipped" toggle - hidden by default (see
    getShopifyOrdersHandler in main.js), check to reveal them */
+/* GR-PLAN-006: Orders pane search ("find fulfilled orders" - James). Plain
+   text input, not a custom combobox like the manual-link one - this
+   filters the already-rendered order list client-side rather than driving
+   a separate results dropdown. */
+.orders-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #fff;
+  margin-bottom: 8px;
+}
+
+.orders-search-input::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.orders-search-input:focus {
+  outline: none;
+  border-color: rgba(74, 158, 255, 0.5);
+}
+
 .orders-show-shipped-toggle {
   display: flex;
   align-items: center;
