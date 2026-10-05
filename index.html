@@ -1968,18 +1968,31 @@
       </div>
     </div>
     <div class="pane-content">
-      <!-- Search -->
+      <!-- Search: search-engine style - magnifier sits outside the typed-text box,
+           no separate "Search Models:" label (the placeholder says what it's for). -->
       <div class="form-group search-models-field">
-        <label for="search-filter-input">Search Models:</label>
-        <div class="input-with-icon">
-          <input type="text" id="search-filter-input" placeholder="Enter search term...">
-          <button id="filter-search-button" class="icon-button" title="Add this text to the active query (all fields)">🔍</button>
-          <button id="clear-filter-search-button" class="icon-button" title="Clear search">×</button>
+        <div class="search-bar">
+          <button id="filter-search-button" class="search-bar-icon-button search-bar-submit" title="Add this text to the active query (all fields)" aria-label="Search">🔍</button>
+          <input type="text" id="search-filter-input" placeholder="Enter search term..." aria-label="Search models">
+          <button id="clear-filter-search-button" class="search-bar-icon-button search-bar-clear" title="Clear search" aria-label="Clear search">×</button>
         </div>
         <label class="search-notes-toggle" title="Include notes in all-fields search. Turn off to skip long imported descriptions. A search limited to the Notes field still matches notes.">
           <input type="checkbox" id="search-include-notes" checked>
           <span>Include Notes</span>
         </label>
+      </div>
+
+      <!-- Rating (star picker: "at least N stars"; drives the hidden rating-min-select) -->
+      <div class="form-group rating-filter-field">
+        <span class="form-group-label" id="rating-star-filter-label">Rating:</span>
+        <div class="rating-star-row" id="rating-star-filter" role="group" aria-labelledby="rating-star-filter-label">
+          <button type="button" class="rating-star" data-value="1" title="At least 1 star" aria-label="At least 1 star">★</button>
+          <button type="button" class="rating-star" data-value="2" title="At least 2 stars" aria-label="At least 2 stars">★</button>
+          <button type="button" class="rating-star" data-value="3" title="At least 3 stars" aria-label="At least 3 stars">★</button>
+          <button type="button" class="rating-star" data-value="4" title="At least 4 stars" aria-label="At least 4 stars">★</button>
+          <button type="button" class="rating-star" data-value="5" title="At least 5 stars" aria-label="At least 5 stars">★</button>
+          <button type="button" class="rating-star-clear" id="rating-star-clear" title="Clear rating filter" aria-label="Show all ratings">All</button>
+        </div>
       </div>
 
       <!-- Sort -->
@@ -2022,20 +2035,27 @@
       </div>
 
       <!-- Quick Filters -->
-      <div class="quick-filters">
-        <label class="quick-filter-checkbox" title="Show only 3MF files">
-          <input type="checkbox" id="filter-3mf-only">
-          <span>3MF Only</span>
-        </label>
-        <label class="quick-filter-checkbox" title="Show models linked to Shopify">
-          <input type="checkbox" id="filter-shopify-linked">
-          <span>Shopify Linked</span>
-        </label>
-        <label class="quick-filter-checkbox" title="Show models not linked to Shopify">
-          <input type="checkbox" id="filter-shopify-not-linked">
-          <span>Not Linked</span>
-        </label>
-      </div>
+      <fieldset class="quick-filters-group">
+        <legend class="quick-filters-group-legend">Quick Filters</legend>
+        <div class="quick-filters">
+          <label class="quick-filter-checkbox" title="Show only 3MF files">
+            <input type="checkbox" id="filter-3mf-only">
+            <span>3MF Only</span>
+          </label>
+          <label class="quick-filter-checkbox" title="Show only favorited models">
+            <input type="checkbox" id="filter-favorite-only">
+            <span>Favorites Only</span>
+          </label>
+          <label class="quick-filter-checkbox" title="Show models linked to Shopify">
+            <input type="checkbox" id="filter-shopify-linked">
+            <span>Shopify Linked</span>
+          </label>
+          <label class="quick-filter-checkbox" title="Show models not linked to Shopify">
+            <input type="checkbox" id="filter-shopify-not-linked">
+            <span>Not Linked</span>
+          </label>
+        </div>
+      </fieldset>
 
       <!-- Folders -->
       <div class="form-group">
@@ -2048,13 +2068,9 @@
         </div>
       </div>
 
-      <!-- More Filters Toggle -->
-      <button type="button" id="filter-stack-toggle" class="filter-stack-toggle" aria-expanded="false" aria-controls="filter-stack">
-        <span class="filter-stack-toggle-label">More filters</span>
-        <span class="filter-stack-toggle-chevron" aria-hidden="true">▸</span>
-      </button>
-
-      <!-- More Filters Section -->
+      <!-- Filters button removed: all filters are now always shown (filter-stack is
+           always visible via CSS; see styles.css). #filter-stack-toggle no longer exists
+           in the DOM; sidebar-layout.js's expand/collapse code is now an inert no-op. -->
       <div id="filter-stack" class="filter-stack">
         <div class="form-group">
           <label for="designer-select">Select Designer:</label>
@@ -2129,7 +2145,10 @@
           </select>
         </div>
 
-        <div class="form-group">
+        <div class="form-group" style="display:none">
+          <!-- Hidden: superseded by the "Favorites Only" quick-filter checkbox above.
+               Kept in the DOM (not deleted) because a lot of filter/search code still
+               reads this element's value directly; the checkbox keeps it in sync. -->
           <label for="favorite-select">Favorite:</label>
           <select id="favorite-select">
             <option value="all">All Models</option>
@@ -2138,7 +2157,12 @@
           </select>
         </div>
 
-        <div class="form-group">
+        <div class="form-group" style="display:none">
+          <!-- Hidden: superseded by the star-rating picker near the top of the pane.
+               Kept in the DOM (not deleted) because a lot of filter/search code still
+               reads this element's value directly. Exact-rating / "unrated" matching
+               was dropped when the star picker replaced both dropdowns (min-rating-only
+               semantics), so this never changes from "all" anymore. -->
           <label for="rating-select">Rating:</label>
           <select id="rating-select">
             <option value="all">All Ratings</option>
@@ -2151,7 +2175,11 @@
           </select>
         </div>
 
-        <div class="form-group">
+        <div class="form-group" style="display:none">
+          <!-- Hidden: superseded by the star-rating picker near the top of the pane
+               (see #rating-star-filter), which sets this element's value and keeps it
+               in sync. Kept in the DOM (not deleted) because a lot of filter/search
+               code still reads this element's value directly. -->
           <label for="rating-min-select">Min Rating:</label>
           <select id="rating-min-select">
             <option value="all">All</option>
@@ -2163,7 +2191,10 @@
           </select>
         </div>
 
-        <div class="form-group">
+        <div class="form-group" style="display:none">
+          <!-- Hidden: superseded by the existing "3MF Only" quick-filter checkbox.
+               Kept in the DOM (not deleted) because a lot of filter/search code still
+               reads this element's value directly; the checkbox keeps it in sync. -->
           <label for="filetype-select">File Type:</label>
           <select id="filetype-select">
             <option value="">All Types</option>

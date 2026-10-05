@@ -3179,6 +3179,25 @@ window.deleteShopifyProductType = async function deleteShopifyProductType(typeId
 let shopifyProductsCache = null;
 // Cache for reconciliation folders
 let reconciliationFoldersCache = null;
+
+/** Debug helper: inspect the live Shopify reconciliation caches from DevTools. */
+window.__debugShopify = function() {
+  const info = {
+    productsCacheLength: shopifyProductsCache?.length,
+    foldersCacheLength: reconciliationFoldersCache?.length,
+    productMatches: (shopifyProductsCache || []).filter(p => /wyrm|garland/i.test(p.title || '')),
+    folderMatches: (reconciliationFoldersCache || []).filter(f => /wyrm|garland/i.test(f.folder_name || f.folder_path || ''))
+  };
+  console.log('[__debugShopify]', info);
+  return info;
+};
+
+/** Temporary deeper diagnostic: hits Shopify directly (list fetch + a by-ID lookup). */
+window.__debugShopifyDeep = async function(productGid, titleMatch) {
+  const result = await window.electron.debugShopifyDiagnostics({ productGid, titleMatch });
+  console.log('[__debugShopifyDeep]', result);
+  return result;
+};
 // Track whether to show skipped files in reconciliation
 let showSkippedInReconciliation = false;
 
@@ -3655,6 +3674,20 @@ async function handleConfirmLink(itemEl, folderPath) {
   try {
     const result = await window.electron.linkFolderToShopify(folderPath, primaryModelId, shopifyProductGid);
 
+    // Keep the in-memory reconciliation cache in sync. Without this, the
+    // folder object in reconciliationFoldersCache still shows
+    // shopify_product_id: null, so the next filter/sort re-render (e.g.
+    // toggling the status filter) rebuilds the list from stale data and
+    // this item reappears as "unlinked" even though it was just linked.
+    if (reconciliationFoldersCache) {
+      const cachedFolder = reconciliationFoldersCache.find(f => f.folder_path === folderPath);
+      if (cachedFolder) {
+        cachedFolder.shopify_product_id = shopifyProductGid;
+        cachedFolder.push_status = 'linked';
+        if (result && result.title) cachedFolder.shopify_title = result.title;
+      }
+    }
+
     // Update UI - mark as linked
     const badgeEl = itemEl.querySelector('.reconciliation-status-badge');
     if (badgeEl) {
@@ -3749,6 +3782,16 @@ async function handleMarkNew(itemEl, folderPath) {
 
   try {
     await window.electron.markFolderAsNew(folderPath, primaryModelId);
+
+    // Keep the in-memory reconciliation cache in sync (see handleConfirmLink
+    // for why this matters: otherwise a later filter/sort re-render reverts
+    // this item back to "Needs Linking").
+    if (reconciliationFoldersCache) {
+      const cachedFolder = reconciliationFoldersCache.find(f => f.folder_path === folderPath);
+      if (cachedFolder) {
+        cachedFolder.push_status = 'will_create_new';
+      }
+    }
 
     // Update UI
     const badgeEl = itemEl.querySelector('.reconciliation-status-badge');
@@ -15041,7 +15084,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Add event listeners on filter and search elements so that the "view-library-message" is removed when a filter or search is active.
-  ["designer-select", "license-select", "parent-select", "printed-select", "new-select", "favorite-select", "rating-select", "rating-min-select", "tag-filter", "filament-filter", "filetype-select", "filter-3mf-only", "filter-shopify-linked", "filter-shopify-not-linked", "search-filter-input"].forEach(id => {
+  ["designer-select", "license-select", "parent-select", "printed-select", "new-select", "favorite-select", "rating-select", "rating-min-select", "tag-filter", "filament-filter", "filetype-select", "filter-3mf-only", "filter-favorite-only", "filter-shopify-linked", "filter-shopify-not-linked", "search-filter-input"].forEach(id => {
     const el = document.getElementById(id);
     if (el) {
       el.addEventListener("change", () => {
@@ -15548,7 +15591,33 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.autoScanLibraryFolders = async function autoScanLibraryFolders() {
     try {
       const folders = await window.electron.getLibraryFolders();
-      const autoScanFolders = folders.filter(f => f.enabled && f.auto_scan);
+      let autoScanFolders = folders.filter(f => f.enabled && f.auto_scan);
+
+      // Skip any auto-scan folder that's already inside an STL Home root. The STL Home
+      // background scan just covered it on this same startup, so re-scanning it here is
+      // pure duplicate work — it re-triggers a full virtual-grid rebuild (destroying and
+      // recreating every visible cell, which can even double up an in-flight thumbnail
+      // render) for files the STL Home scan already found.
+      try {
+        const stlHomes = (await getStlHomeDirectories())
+          .map(h => normalizePathForComparison(h).toLowerCase().replace(/\/+$/, ''));
+        if (stlHomes.length > 0) {
+          const before = autoScanFolders.length;
+          autoScanFolders = autoScanFolders.filter(folder => {
+            const normFolder = normalizePathForComparison(folder.path).toLowerCase().replace(/\/+$/, '');
+            const covered = stlHomes.some(home => normFolder === home || normFolder.startsWith(home + '/'));
+            if (covered) {
+              console.log(`[Auto-scan] Skipping ${folder.path} — already covered by STL Home scan`);
+            }
+            return !covered;
+          });
+          if (autoScanFolders.length !== before) {
+            console.log(`[Auto-scan] Skipped ${before - autoScanFolders.length} folder(s) already covered by STL Home scan`);
+          }
+        }
+      } catch (e) {
+        console.warn('[Auto-scan] Could not check STL Home overlap, scanning all configured folders:', e);
+      }
 
       if (autoScanFolders.length === 0) {
         console.log('[Auto-scan] No folders configured for auto-scan');
@@ -18930,8 +18999,16 @@ async function scanAndRenderDirectory(directoryPath, background = false, isStlHo
       const thumb = existingThumbnails.get(file.filePath);
       return !thumb || thumb === '3d.png' || (typeof thumb === 'string' && thumb.trim() === '');
     });
+    // Background scans (auto-scan on startup, STL Home re-scan) walk one folder at a
+    // time. Checking only *this folder's* missing-thumbnail count against the threshold
+    // meant a library with several small auto-scan folders (each under the threshold)
+    // never deferred at all — every folder eagerly WebGL-rendered its own thumbnails in
+    // the background, one folder after another, causing sustained CPU/GPU load on every
+    // app open regardless of what's actually on screen. A background scan should always
+    // defer to the visible-item lazy queue; only an interactive (non-background) scan
+    // uses the per-batch threshold.
     const deferScanThumbnails =
-      filesNeedingThumbnails.length > DEFER_SCAN_BATCH_THUMBNAILS_THRESHOLD;
+      background || filesNeedingThumbnails.length > DEFER_SCAN_BATCH_THUMBNAILS_THRESHOLD;
 
     if (!background) {
       if (filesNeedingThumbnails.length > 0) {

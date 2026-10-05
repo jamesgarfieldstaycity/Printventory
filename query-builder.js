@@ -325,11 +325,21 @@
     const v = String(rawValue || "").trim();
     if (!v) return false;
     const tok = window.searchBoolTokens;
+    const f = field || "all";
     const last = tok.length ? tok[tok.length - 1] : null;
+    // Since the search box now keeps its text after Enter/click (rather than
+    // clearing), re-submitting the same unchanged term (e.g. pressing Enter
+    // again without editing) would otherwise keep stacking identical AND
+    // clauses forever. Skip re-adding when it's an exact repeat of the last
+    // clause.
+    if (last && last.t === "clause" && last.field === f && last.value === v) {
+      setSearchQueryAwaiting(false);
+      return true;
+    }
     if (last && isSearchOperand(last)) {
       tok.push({ t: "op", op: "AND" });
     }
-    tok.push({ t: "clause", field: field || "all", value: v });
+    tok.push({ t: "clause", field: f, value: v });
     collapseAdjacentDuplicateBinaryOps(tok);
     setSearchQueryAwaiting(false);
     return true;

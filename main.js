@@ -2780,27 +2780,27 @@ const MODEL_LIST_THUMB_FLAGS_QUALIFIED =
 
 /** Shopify linked flag - checks direct model_id and folder-based linking */
 const SHOPIFY_LINKED_FLAG =
-  "CASE WHEN EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.model_id = id) " +
-  "OR EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.folder_path IS NOT NULL AND sp.folder_path != '' AND REPLACE(filePath, CHAR(92), '/') LIKE sp.folder_path || '/%') " +
+  "CASE WHEN EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.model_id = models.id) " +
+  "OR EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.folder_path IS NOT NULL AND sp.folder_path != '' AND (CASE WHEN sp.folder_path LIKE '%:' THEN REPLACE(filePath, CHAR(92), '/') LIKE sp.folder_path || '%' ELSE REPLACE(filePath, CHAR(92), '/') LIKE sp.folder_path || '/%' END)) " +
   "THEN 1 ELSE 0 END AS shopifyLinked";
 const SHOPIFY_LINKED_FLAG_QUALIFIED =
   "CASE WHEN EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.model_id = models.id) " +
-  "OR EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.folder_path IS NOT NULL AND sp.folder_path != '' AND REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%') " +
+  "OR EXISTS (SELECT 1 FROM shopify_products sp WHERE sp.folder_path IS NOT NULL AND sp.folder_path != '' AND (CASE WHEN sp.folder_path LIKE '%:' THEN REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '%' ELSE REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%' END)) " +
   "THEN 1 ELSE 0 END AS shopifyLinked";
 
 /** Shopify variant info - returns product title, variant option value, multi-file flag, and group key for display */
 // shopifyIsMultiFile counts actual 3MF/STL files in the product's folder, not shopify_product_files rows
 // shopifyGroupKey is used for grid grouping - separate from bundleKey/parentModel grouping
 const SHOPIFY_VARIANT_INFO =
-  "(SELECT spf.variant_option_value FROM shopify_product_files spf WHERE spf.model_id = id LIMIT 1) AS shopifyVariantLabel, " +
-  "(SELECT sp.title FROM shopify_products sp WHERE sp.model_id = id OR (sp.folder_path IS NOT NULL AND sp.folder_path != '' AND REPLACE(filePath, CHAR(92), '/') LIKE sp.folder_path || '/%') LIMIT 1) AS shopifyProductTitle, " +
-  "(SELECT CASE WHEN (SELECT COUNT(*) FROM models m2 WHERE REPLACE(m2.filePath, CHAR(92), '/') LIKE sp3.folder_path || '/%' AND (LOWER(m2.fileName) LIKE '%.3mf' OR LOWER(m2.fileName) LIKE '%.stl')) > 1 THEN 1 ELSE 0 END FROM shopify_products sp3 WHERE sp3.model_id = id OR (sp3.folder_path IS NOT NULL AND sp3.folder_path != '' AND REPLACE(filePath, CHAR(92), '/') LIKE sp3.folder_path || '/%') LIMIT 1) AS shopifyIsMultiFile, " +
-  "(SELECT sp.folder_path FROM shopify_products sp WHERE sp.model_id = id OR (sp.folder_path IS NOT NULL AND sp.folder_path != '' AND REPLACE(filePath, CHAR(92), '/') LIKE sp.folder_path || '/%') LIMIT 1) AS shopifyGroupKey";
+  "(SELECT spf.variant_option_value FROM shopify_product_files spf WHERE spf.model_id = models.id LIMIT 1) AS shopifyVariantLabel, " +
+  "(SELECT sp.title FROM shopify_products sp WHERE sp.model_id = models.id OR (sp.folder_path IS NOT NULL AND sp.folder_path != '' AND (CASE WHEN sp.folder_path LIKE '%:' THEN REPLACE(filePath, CHAR(92), '/') LIKE sp.folder_path || '%' ELSE REPLACE(filePath, CHAR(92), '/') LIKE sp.folder_path || '/%' END)) LIMIT 1) AS shopifyProductTitle, " +
+  "(SELECT CASE WHEN (SELECT COUNT(*) FROM models m2 WHERE (CASE WHEN sp3.folder_path LIKE '%:' THEN REPLACE(m2.filePath, CHAR(92), '/') LIKE sp3.folder_path || '%' ELSE REPLACE(m2.filePath, CHAR(92), '/') LIKE sp3.folder_path || '/%' END) AND (LOWER(m2.fileName) LIKE '%.3mf' OR LOWER(m2.fileName) LIKE '%.stl')) > 1 THEN 1 ELSE 0 END FROM shopify_products sp3 WHERE sp3.model_id = models.id OR (sp3.folder_path IS NOT NULL AND sp3.folder_path != '' AND (CASE WHEN sp3.folder_path LIKE '%:' THEN REPLACE(filePath, CHAR(92), '/') LIKE sp3.folder_path || '%' ELSE REPLACE(filePath, CHAR(92), '/') LIKE sp3.folder_path || '/%' END)) LIMIT 1) AS shopifyIsMultiFile, " +
+  "(SELECT sp.folder_path FROM shopify_products sp WHERE sp.model_id = models.id OR (sp.folder_path IS NOT NULL AND sp.folder_path != '' AND (CASE WHEN sp.folder_path LIKE '%:' THEN REPLACE(filePath, CHAR(92), '/') LIKE sp.folder_path || '%' ELSE REPLACE(filePath, CHAR(92), '/') LIKE sp.folder_path || '/%' END)) LIMIT 1) AS shopifyGroupKey";
 const SHOPIFY_VARIANT_INFO_QUALIFIED =
   "(SELECT spf.variant_option_value FROM shopify_product_files spf WHERE spf.model_id = models.id LIMIT 1) AS shopifyVariantLabel, " +
-  "(SELECT sp.title FROM shopify_products sp WHERE sp.model_id = models.id OR (sp.folder_path IS NOT NULL AND sp.folder_path != '' AND REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%') LIMIT 1) AS shopifyProductTitle, " +
-  "(SELECT CASE WHEN (SELECT COUNT(*) FROM models m2 WHERE REPLACE(m2.filePath, CHAR(92), '/') LIKE sp3.folder_path || '/%' AND (LOWER(m2.fileName) LIKE '%.3mf' OR LOWER(m2.fileName) LIKE '%.stl')) > 1 THEN 1 ELSE 0 END FROM shopify_products sp3 WHERE sp3.model_id = models.id OR (sp3.folder_path IS NOT NULL AND sp3.folder_path != '' AND REPLACE(models.filePath, CHAR(92), '/') LIKE sp3.folder_path || '/%') LIMIT 1) AS shopifyIsMultiFile, " +
-  "(SELECT sp.folder_path FROM shopify_products sp WHERE sp.model_id = models.id OR (sp.folder_path IS NOT NULL AND sp.folder_path != '' AND REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%') LIMIT 1) AS shopifyGroupKey";
+  "(SELECT sp.title FROM shopify_products sp WHERE sp.model_id = models.id OR (sp.folder_path IS NOT NULL AND sp.folder_path != '' AND (CASE WHEN sp.folder_path LIKE '%:' THEN REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '%' ELSE REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%' END)) LIMIT 1) AS shopifyProductTitle, " +
+  "(SELECT CASE WHEN (SELECT COUNT(*) FROM models m2 WHERE (CASE WHEN sp3.folder_path LIKE '%:' THEN REPLACE(m2.filePath, CHAR(92), '/') LIKE sp3.folder_path || '%' ELSE REPLACE(m2.filePath, CHAR(92), '/') LIKE sp3.folder_path || '/%' END) AND (LOWER(m2.fileName) LIKE '%.3mf' OR LOWER(m2.fileName) LIKE '%.stl')) > 1 THEN 1 ELSE 0 END FROM shopify_products sp3 WHERE sp3.model_id = models.id OR (sp3.folder_path IS NOT NULL AND sp3.folder_path != '' AND (CASE WHEN sp3.folder_path LIKE '%:' THEN REPLACE(models.filePath, CHAR(92), '/') LIKE sp3.folder_path || '%' ELSE REPLACE(models.filePath, CHAR(92), '/') LIKE sp3.folder_path || '/%' END)) LIMIT 1) AS shopifyIsMultiFile, " +
+  "(SELECT sp.folder_path FROM shopify_products sp WHERE sp.model_id = models.id OR (sp.folder_path IS NOT NULL AND sp.folder_path != '' AND (CASE WHEN sp.folder_path LIKE '%:' THEN REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '%' ELSE REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%' END)) LIMIT 1) AS shopifyGroupKey";
 
 const MODEL_LIST_COLUMNS = `${MODEL_DETAIL_COLUMNS}, ${MODEL_LIST_THUMB_FLAGS}, ${SHOPIFY_LINKED_FLAG}, ${SHOPIFY_VARIANT_INFO}`;
 const MODEL_LIST_COLUMNS_QUALIFIED =
@@ -6307,7 +6307,7 @@ function buildModelFilterConditions(filters) {
           SELECT 1 FROM shopify_products sp
           WHERE sp.folder_path IS NOT NULL
           AND sp.folder_path != ''
-          AND REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%'
+          AND (CASE WHEN sp.folder_path LIKE '%:' THEN REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '%' ELSE REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%' END)
         )
       )`);
     } else if (filters.shopifyFilter === 'not-linked') {
@@ -6317,7 +6317,7 @@ function buildModelFilterConditions(filters) {
           SELECT 1 FROM shopify_products sp
           WHERE sp.folder_path IS NOT NULL
           AND sp.folder_path != ''
-          AND REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%'
+          AND (CASE WHEN sp.folder_path LIKE '%:' THEN REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '%' ELSE REPLACE(models.filePath, CHAR(92), '/') LIKE sp.folder_path || '/%' END)
         )
       )`);
     }
@@ -8285,6 +8285,51 @@ ipcMain.handle('fetch-shopify-products', fetchShopifyProductsHandler);
 ipcHandlerRegistry.set('fetch-shopify-products', fetchShopifyProductsHandler);
 
 /**
+ * TEMPORARY diagnostic handler - not wired into any UI.
+ * Compares a full (uncapped-ish) product list fetch against a direct by-ID
+ * lookup for a specific product GID, to figure out whether a "missing"
+ * product is a pagination/sort issue in fetchAllProducts, or something the
+ * Admin API won't return via the list endpoint at all for this app's scope.
+ * Safe to delete once the Wyrm's Perch / Widow's Garland mystery is solved.
+ */
+async function debugShopifyDiagnosticsHandler(event, { productGid, titleMatch } = {}) {
+  const settings = readShopifySettings();
+  if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
+    return { error: 'Shopify credentials not configured' };
+  }
+
+  const result = { totalFetched: null, matchesInList: [], directLookup: null, directLookupError: null };
+
+  try {
+    const products = await shopifyApi.fetchAllProducts(
+      settings.storeDomain, settings.clientId, settings.clientSecret, 1000
+    );
+    result.totalFetched = products.length;
+    if (titleMatch) {
+      const re = new RegExp(titleMatch, 'i');
+      result.matchesInList = products.filter(p => re.test(p.title || ''));
+    }
+  } catch (error) {
+    result.listError = error.message || String(error);
+  }
+
+  if (productGid) {
+    try {
+      const product = await shopifyApi.fetchProductWithVariants(
+        settings.storeDomain, settings.clientId, settings.clientSecret, productGid
+      );
+      result.directLookup = { id: product.id, title: product.title, status: product.status };
+    } catch (error) {
+      result.directLookupError = error.message || String(error);
+    }
+  }
+
+  return result;
+}
+ipcMain.handle('debug-shopify-diagnostics', debugShopifyDiagnosticsHandler);
+ipcHandlerRegistry.set('debug-shopify-diagnostics', debugShopifyDiagnosticsHandler);
+
+/**
  * Get Shopify product IDs that are already linked to local products.
  * Used to filter the reconciliation dropdown.
  */
@@ -8430,7 +8475,10 @@ async function getUnlinkedFoldersHandler(event, includeSkipped = false) {
           sp.title as shopify_title,
           -- Count skipped files in this folder
           (SELECT COUNT(*) FROM shopify_product_files spf
-           WHERE spf.folder_path = ff.folder_path AND spf.link_status = 'skipped') as skipped_count
+           WHERE spf.folder_path = ff.folder_path AND spf.link_status = 'skipped') as skipped_count,
+          -- Count files explicitly marked primary in this folder
+          (SELECT COUNT(*) FROM shopify_product_files spf
+           WHERE spf.folder_path = ff.folder_path AND spf.is_primary = 1) as primary_count
         FROM folder_files ff
         LEFT JOIN shopify_products sp ON sp.folder_path = ff.folder_path
         GROUP BY ff.folder_path
@@ -8445,14 +8493,18 @@ async function getUnlinkedFoldersHandler(event, includeSkipped = false) {
         shopify_product_id,
         push_status,
         shopify_title,
-        skipped_count
+        skipped_count,
+        primary_count
       FROM folder_status
       WHERE
         -- Not yet linked to Shopify
         (shopify_product_id IS NULL OR shopify_product_id = '')
         AND (push_status IS NULL OR push_status NOT IN ('linked', 'draft', 'will_create_new'))
-        -- Not all files skipped (unless showing skipped)
-        AND (${includeSkipped ? '1=1' : 'skipped_count < file_count'})
+        -- Not all files skipped (unless showing skipped) -- but if every file got
+        -- skipped and none was ever promoted to primary, the folder was never
+        -- actually resolved (no product was linked or created), so it still
+        -- needs attention regardless of the skip count.
+        AND (${includeSkipped ? '1=1' : "skipped_count < file_count OR primary_count = 0"})
       ORDER BY folder_path
     `).all();
 

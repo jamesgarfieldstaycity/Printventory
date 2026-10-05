@@ -167,6 +167,7 @@ contextBridge.exposeInMainWorld('electron', {
   setShopifyInventory: (updates) => ipcRenderer.invoke('set-shopify-inventory', updates),
   // Shopify reconciliation (folder-based)
   fetchShopifyProducts: () => ipcRenderer.invoke('fetch-shopify-products'),
+  debugShopifyDiagnostics: (args) => ipcRenderer.invoke('debug-shopify-diagnostics', args),
   getLinkedShopifyProductIds: () => ipcRenderer.invoke('get-linked-shopify-product-ids'),
   getUnlinkedFolders: (includeSkipped) => ipcRenderer.invoke('get-unlinked-folders', includeSkipped),
   getUnlinkedProducts: () => ipcRenderer.invoke('get-unlinked-products'), // Legacy alias

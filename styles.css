@@ -398,9 +398,8 @@ body.sidebar-pinned.folder-rail-open:not(.filters-pane-pinned) .main-content {
   width: 100%;
 }
 
-.sidebar:not(.filters-expanded) .filter-stack {
-  display: none;
-}
+/* "More filters" toggle removed from the UI (index.html) - all filters are now
+   always shown, so .filter-stack is no longer gated behind .filters-expanded. */
 
 body.folder-rail-open {
   --folder-rail-width: var(--folder-tree-width, 280px);
@@ -458,19 +457,68 @@ body.server-mode #preview-slicer-menu {
   letter-spacing: 0.02em;
 }
 
-.filter-section .search-models-field .input-with-icon {
+/* Search bar: search-engine style - magnifier button sits outside the typed-text
+   box (not layered inside it), input gets full room to type, no separate label. */
+.search-models-field .search-bar {
+  display: flex;
+  align-items: stretch;
   width: 100%;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 20px;
+  overflow: hidden;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
-/* Spyglass stays on the trailing edge. Clear sits immediately to its left. */
-.filter-section .search-models-field .input-with-icon #filter-search-button {
-  right: 4px;
-  z-index: 11;
+.search-models-field .search-bar:focus-within {
+  border-color: rgba(74, 158, 255, 0.5);
+  background: rgba(255, 255, 255, 0.08);
 }
 
-.filter-section .search-models-field .input-with-icon #clear-filter-search-button {
-  right: 44px;
-  z-index: 10;
+.search-models-field .search-bar input#search-filter-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+  height: auto;
+  border: none;
+  background: transparent;
+  padding: 0 4px;
+  font-size: 14px;
+  color: #fff;
+}
+
+.search-models-field .search-bar input#search-filter-input:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.search-models-field .search-bar-icon-button {
+  position: static;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 15px;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.search-models-field .search-bar-submit {
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.search-models-field .search-bar-icon-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
 }
 
 .filter-section .search-notes-toggle {
@@ -12602,27 +12650,50 @@ body.is-panel-resizing * {
   margin-top: 4px;
 }
 
-/* Quick Filters */
+/* Quick Filters - grouped in a titled box so they read as one related set */
+.quick-filters-group {
+  margin: 0 0 15px;
+  padding: 10px 10px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  min-width: 0;
+}
+
+.quick-filters-group-legend {
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+
 .quick-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  padding: 8px 0;
-  margin-bottom: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px 10px;
+  padding: 2px 0 8px;
+  margin-bottom: 0;
 }
 
 .quick-filter-checkbox {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   cursor: pointer;
   font-size: 13px;
   color: #ccc;
-  padding: 4px 8px;
+  padding: 6px 8px;
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
   transition: all 0.15s ease;
+  width: 100%;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .quick-filter-checkbox:hover {
@@ -12639,6 +12710,74 @@ body.is-panel-resizing * {
 .quick-filter-checkbox input[type="checkbox"] {
   margin: 0;
   cursor: pointer;
+}
+
+/* Rating star picker (replaces the old Rating / Min Rating dropdowns).
+   Clicking a star sets "this many stars and up"; clicking the active
+   threshold again, or the "All" pill, clears the filter. */
+.rating-filter-field .form-group-label {
+  display: block;
+  font-weight: 500;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
+  letter-spacing: 0.02em;
+  margin-bottom: 6px;
+}
+
+.rating-star-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.rating-star {
+  background: none;
+  border: none;
+  padding: 2px;
+  margin: 0;
+  font-size: 22px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.25);
+  cursor: pointer;
+  transition: color 0.1s ease, transform 0.1s ease;
+}
+
+.rating-star.hover-preview {
+  color: rgba(255, 196, 0, 0.5);
+}
+
+.rating-star.active {
+  color: #ffc400;
+}
+
+.rating-star:focus-visible {
+  outline: 2px solid rgba(74, 158, 255, 0.6);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.rating-star-clear {
+  margin-left: 8px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #ccc;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.rating-star-clear:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.rating-star-clear.active {
+  background: rgba(74, 158, 255, 0.2);
+  border-color: rgba(74, 158, 255, 0.4);
+  color: #fff;
 }
 
 /* ============================================

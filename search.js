@@ -189,6 +189,21 @@ function setLibrarySelectValue(id, value) {
   if (el) el.value = value;
 }
 
+/** Reflect the hidden rating-min-select value onto the star-picker buttons. */
+function syncRatingStarsFromSelect() {
+  const ratingMinSelect = document.getElementById('rating-min-select');
+  const row = document.getElementById('rating-star-filter');
+  const clearBtn = document.getElementById('rating-star-clear');
+  if (!row) return;
+  const raw = ratingMinSelect?.value || 'all';
+  const current = /^[1-5]$/.test(raw) ? parseInt(raw, 10) : 0;
+  row.querySelectorAll('.rating-star').forEach(star => {
+    const starValue = parseInt(star.getAttribute('data-value'), 10);
+    star.classList.toggle('active', starValue <= current);
+  });
+  if (clearBtn) clearBtn.classList.toggle('active', current === 0);
+}
+
 /** Reset sidebar / query-builder filters to the unfiltered library. */
 function clearAllLibraryFilters() {
   setLibrarySelectValue("designer-select", "");
@@ -199,14 +214,17 @@ function clearAllLibraryFilters() {
   setLibrarySelectValue("favorite-select", "all");
   setLibrarySelectValue("rating-select", "all");
   setLibrarySelectValue("rating-min-select", "all");
+  syncRatingStarsFromSelect();
   setLibrarySelectValue("tag-filter", "");
   setLibrarySelectValue("filament-filter", "");
   setLibrarySelectValue("filetype-select", "");
   // Clear quick filter checkboxes
   const filter3mfOnly = document.getElementById("filter-3mf-only");
+  const filterFavoriteOnly = document.getElementById("filter-favorite-only");
   const filterShopifyLinked = document.getElementById("filter-shopify-linked");
   const filterShopifyNotLinked = document.getElementById("filter-shopify-not-linked");
   if (filter3mfOnly) filter3mfOnly.checked = false;
+  if (filterFavoriteOnly) filterFavoriteOnly.checked = false;
   if (filterShopifyLinked) filterShopifyLinked.checked = false;
   if (filterShopifyNotLinked) filterShopifyNotLinked.checked = false;
   if (typeof window.queryBuilderClearAllMultiChips === "function") {
@@ -710,12 +728,14 @@ function updateFilterIndicator(count) {
           break;
         case 'favoriteStatus':
           document.getElementById("favorite-select").value = "all";
+          { const favoriteOnlyCb = document.getElementById('filter-favorite-only'); if (favoriteOnlyCb) favoriteOnlyCb.checked = false; }
           break;
         case 'ratingStatus':
           document.getElementById("rating-select").value = "all";
           break;
         case 'ratingMinStatus':
           document.getElementById("rating-min-select").value = "all";
+          syncRatingStarsFromSelect();
           break;
         case 'tagFilter':
           document.getElementById("tag-filter").value = "";
@@ -828,6 +848,7 @@ async function initializeCombinedSearch() {
   // Quick filter checkboxes
   const quickFilterCheckboxes = [
     'filter-3mf-only',
+    'filter-favorite-only',
     'filter-shopify-linked',
     'filter-shopify-not-linked'
   ];
@@ -860,6 +881,80 @@ async function initializeCombinedSearch() {
     if (filter3mfCheckbox) {
       filter3mfCheckbox.checked = fileTypeSelect.value === '3mf';
     }
+  }
+
+  // Sync the Favorites Only checkbox with the (hidden) favorite-select value
+  const favoriteSelectForInit = document.getElementById('favorite-select');
+  const filterFavoriteCheckboxInit = document.getElementById('filter-favorite-only');
+  if (favoriteSelectForInit && filterFavoriteCheckboxInit) {
+    filterFavoriteCheckboxInit.checked = favoriteSelectForInit.value === 'favorited';
+  }
+
+  // Rating star picker: sync visuals from the (hidden) rating-min-select value,
+  // and wire up clicks. Clicking the already-active star (or the "All" pill)
+  // clears the filter back to "all" (star picker is "at least N stars" only).
+  syncRatingStarsFromSelect();
+  const ratingStarRow = document.getElementById('rating-star-filter');
+  if (ratingStarRow && !ratingStarRow.dataset.wired) {
+    ratingStarRow.dataset.wired = 'true';
+
+    // NOTE: always re-fetch rating-min-select live (never cache it in this closure).
+    // filterElements.forEach above clones/replaces 'rating-min-select' on every
+    // re-init of this function, so a cached reference would silently go stale
+    // (writes would land on a detached node that nothing reads - the filter would
+    // look unclickable even though hover/visual code, which has no such reference,
+    // keeps working).
+    const applyRatingMin = async (value) => {
+      const liveSelect = document.getElementById('rating-min-select');
+      if (!liveSelect) return;
+      liveSelect.value = value;
+      syncRatingStarsFromSelect();
+      window.viewingEntireLibrary = false;
+      if (typeof window.resetFilterSelectionAndDetails === 'function') {
+        window.resetFilterSelectionAndDetails();
+      }
+      if (typeof window.queryBuilderTryConsumeAwaitingFilterFromElement === 'function') {
+        window.queryBuilderTryConsumeAwaitingFilterFromElement('rating-min-select');
+      }
+      if (typeof window.queryBuilderDismissSearchAwaiting === 'function') {
+        window.queryBuilderDismissSearchAwaiting();
+      }
+      if (window.dateAddedFilter && !window._suppressFilterEvents) {
+        window.dateAddedFilter = null;
+        window._lastDateAddedFilter = null;
+      }
+      await performCombinedSearch();
+    };
+
+    ratingStarRow.querySelectorAll('.rating-star').forEach(star => {
+      star.addEventListener('click', () => {
+        const value = star.getAttribute('data-value');
+        const liveSelect = document.getElementById('rating-min-select');
+        const isActive = liveSelect && liveSelect.value === value;
+        applyRatingMin(isActive ? 'all' : value);
+      });
+    });
+
+    const ratingClearBtn = document.getElementById('rating-star-clear');
+    if (ratingClearBtn) {
+      ratingClearBtn.addEventListener('click', () => applyRatingMin('all'));
+    }
+
+    // Hover preview: fill stars up to the hovered one.
+    ratingStarRow.addEventListener('mouseover', (e) => {
+      const hovered = e.target.closest('.rating-star');
+      if (!hovered) return;
+      const hoverValue = parseInt(hovered.getAttribute('data-value'), 10);
+      ratingStarRow.querySelectorAll('.rating-star').forEach(star => {
+        const starValue = parseInt(star.getAttribute('data-value'), 10);
+        star.classList.toggle('hover-preview', starValue <= hoverValue);
+      });
+    });
+    ratingStarRow.addEventListener('mouseleave', () => {
+      ratingStarRow.querySelectorAll('.rating-star').forEach(star => {
+        star.classList.remove('hover-preview');
+      });
+    });
   }
 
   // Handle sort-select separately
@@ -1060,6 +1155,14 @@ async function initializeCombinedSearch() {
           }
         }
 
+        // Sync Favorites Only checkbox with the (hidden) favorite dropdown
+        if (checkboxId === 'filter-favorite-only') {
+          const favoriteSelect = document.getElementById('favorite-select');
+          if (favoriteSelect) {
+            favoriteSelect.value = e.target.checked ? 'favorited' : 'all';
+          }
+        }
+
         // Reset the viewingEntireLibrary flag when filters are applied
         window.viewingEntireLibrary = false;
 
@@ -1077,9 +1180,11 @@ async function initializeCombinedSearch() {
     console.log("Filter search button clicked with term:", raw);
     if (raw && typeof window.appendSearchClauseFromSidebar === "function") {
       window.appendSearchClauseFromSidebar("all", raw);
-      searchInput.value = "";
-      clearButton.classList.add("hidden");
-      clearButton.style.display = "none";
+      // Keep the typed term visible in the box after searching (don't clear
+      // it out from under the user) and keep the X button available so they
+      // can explicitly clear it themselves.
+      clearButton.classList.remove("hidden");
+      clearButton.style.display = "block";
     }
     // Clear dateAddedFilter when user searches
     if (window.dateAddedFilter) {
@@ -1215,6 +1320,7 @@ function toggleFilterControls(enabled) {
     'filament-filter',
     'filetype-select',
     'filter-3mf-only',
+    'filter-favorite-only',
     'filter-shopify-linked',
     'filter-shopify-not-linked',
     'folder-select',
