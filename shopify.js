@@ -1003,8 +1003,17 @@ async function fetchAllProducts(storeDomain, clientId, clientSecret, limit = 250
  */
 async function fetchOrders(storeDomain, clientId, clientSecret, options = {}) {
   const {
-    searchQuery = 'fulfillment_status:unfulfilled OR fulfillment_status:partial',
-    limit = 250
+    // GR-PLAN-006: pull full order history by default, not just
+    // unfulfilled/partial. James found orders marked fulfilled directly in
+    // Shopify during development/testing that still genuinely needed
+    // printing and shipping - with the old unfulfilled-only filter those
+    // orders quietly stopped syncing the moment Shopify's own status
+    // changed, even though nothing had actually been shipped. Printventory
+    // now decides "done" from its own local_status, never from Shopify's
+    // fulfillment_status, so nothing is lost by syncing everything (see
+    // getShopifyOrdersHandler in main.js for the hide/show-shipped split).
+    searchQuery = null,
+    limit = 1000
   } = options;
 
   const accessToken = await getAccessToken(storeDomain, clientId, clientSecret);

@@ -18,6 +18,7 @@
   let modelsFuse = null; // fuzzy-search index over modelsCache (built once, same data)
   let ordersListLoaded = false;
   let toastTimeout = null;
+  let showShipped = false; // "Show shipped" toggle - hidden by default, see getShopifyOrdersHandler
 
   // Matches Shopify's own fulfillment screen: a dropdown against Shopify's
   // recognized carrier list (so trackingInfo.company matches well enough
@@ -285,21 +286,81 @@
     `;
   }
 
+  function captureListUiState(listEl) {
+    const state = { scrollTop: listEl.scrollTop, shipDrafts: {} };
+    listEl.querySelectorAll('.order-ship-section[data-order-id]').forEach((section) => {
+      const panel = section.querySelector('.order-ship-panel');
+      if (!panel || panel.hidden) return;
+      state.shipDrafts[section.dataset.orderId] = {
+        carrier: section.querySelector('.order-ship-carrier')?.value,
+        trackingNumber: section.querySelector('.order-ship-tracking-number')?.value || '',
+        trackingUrl: section.querySelector('.order-ship-tracking-url')?.value || ''
+      };
+    });
+    return state;
+  }
+
+  /**
+   * James: "clicking mark printed causes the pane to jump to the top, its
+   * confusing" / "can ship order be collapsed until im ready to complete"
+   * - both trace back to the same cause. Mark Printed, Ship, Unlink, a
+   * variant assignment and a background sync all share one live-refresh
+   * mechanism (the shopify-orders-synced event -> renderOrdersList), which
+   * rebuilt #orders-list from scratch - resetting scroll to the top and
+   * silently collapsing any "Ship order..." panel James had open and was
+   * mid-filling-in. Restoring both after the rebuild keeps a panel he
+   * opened open, with whatever he'd already typed, until he actually
+   * completes it or collapses it himself - and keeps his place in the list.
+   */
+  function restoreListUiState(listEl, state) {
+    if (!state) return;
+    for (const [orderId, draft] of Object.entries(state.shipDrafts)) {
+      const section = listEl.querySelector(`.order-ship-section[data-order-id="${orderId}"]`);
+      const panel = section?.querySelector('.order-ship-panel');
+      if (!panel) continue;
+      panel.hidden = false;
+      const carrierSelect = section.querySelector('.order-ship-carrier');
+      if (carrierSelect && draft.carrier) carrierSelect.value = draft.carrier;
+      const numberInput = section.querySelector('.order-ship-tracking-number');
+      if (numberInput) numberInput.value = draft.trackingNumber;
+      const urlInput = section.querySelector('.order-ship-tracking-url');
+      if (urlInput) {
+        urlInput.hidden = carrierSelect?.value !== 'Other';
+        urlInput.value = draft.trackingUrl;
+      }
+    }
+    listEl.scrollTop = state.scrollTop;
+  }
+
   async function renderOrdersList() {
     const listEl = document.getElementById('orders-list');
     if (!listEl) return;
+    const uiState = captureListUiState(listEl);
     listEl.innerHTML = '<div class="orders-empty-state">Loading…</div>';
     try {
-      const orders = await window.electron.getShopifyOrders();
+      const orders = await window.electron.getShopifyOrders({ includeShipped: showShipped });
       if (!orders || !orders.length) {
-        listEl.innerHTML = '<div class="orders-empty-state">No open orders. New orders will appear here after the next sync.</div>';
+        listEl.innerHTML = showShipped
+          ? '<div class="orders-empty-state">No orders yet.</div>'
+          : '<div class="orders-empty-state">No open orders. New orders will appear here after the next sync.</div>';
         return;
       }
       listEl.innerHTML = orders.map(renderOrderCard).join('');
+      restoreListUiState(listEl, uiState);
     } catch (e) {
       console.error('[OrdersPane] Failed to load orders:', e);
       listEl.innerHTML = '<div class="orders-empty-state">Could not load orders.</div>';
     }
+  }
+
+  function bindShowShippedToggle() {
+    const checkbox = document.getElementById('orders-show-shipped-checkbox');
+    if (!checkbox || checkbox.dataset.bound) return;
+    checkbox.dataset.bound = '1';
+    checkbox.addEventListener('change', () => {
+      showShipped = checkbox.checked;
+      if (ordersListLoaded) renderOrdersList();
+    });
   }
 
   function loadOrdersIfNeeded() {
@@ -363,7 +424,10 @@
         btn.textContent = original;
         return;
       }
-      await renderOrdersList();
+      // Don't re-render here - main.js's handler already emitted
+      // shopify-orders-synced, which bindSyncedEvent() below turns into a
+      // badge refresh + a single list rebuild. Rendering twice was the
+      // scroll-jump/collapsed-ship-panel bug.
     } catch (e) {
       alert(`Could not mark printed: ${e.message || e}`);
       btn.disabled = false;
@@ -401,7 +465,8 @@
         btn.textContent = original;
         return;
       }
-      await renderOrdersList();
+      // Same as Mark Printed above - the backend's own shopify-orders-synced
+      // event already triggers the one refresh this needs.
     } catch (e) {
       alert(`Could not mark shipped: ${e.message || e}`);
       btn.disabled = false;
@@ -779,6 +844,7 @@
     registerPane();
     bindListEvents();
     bindSyncButton();
+    bindShowShippedToggle();
     bindSyncedEvent();
     bindPaneOpenRefresh();
     refreshBadge();

@@ -13312,6 +13312,22 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
   cursor: default;
 }
 
+/* Orders pane: "Show shipped" toggle - hidden by default (see
+   getShopifyOrdersHandler in main.js), check to reveal them */
+.orders-show-shipped-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  user-select: none;
+}
+
+.orders-show-shipped-toggle input {
+  margin: 0;
+}
+
 /* Order card */
 .order-card {
   background: rgba(255, 255, 255, 0.03);

@@ -8542,11 +8542,20 @@ ipcHandlerRegistry.set('sync-shopify-orders', syncShopifyOrdersHandler);
 /**
  * Read synced orders + line items for the Orders pane (renderer-facing,
  * read-only - the renderer never queries shopify_orders directly).
+ *
+ * Hidden by default: orders where Printventory's own local_status is
+ * 'shipped' - deliberately NOT Shopify's own fulfillment_status, since an
+ * order can be fulfilled directly in Shopify (as happened during
+ * development/testing) without actually being printed or shipped yet.
+ * Pass { includeShipped: true } (the Orders pane's "Show shipped" toggle)
+ * to see them too.
  */
 async function getShopifyOrdersHandler(event, options = {}) {
   try {
+    const includeShipped = !!(options && options.includeShipped);
     const orders = db.prepare(`
       SELECT * FROM shopify_orders
+      ${includeShipped ? '' : "WHERE local_status != 'shipped'"}
       ORDER BY order_created_at ASC
     `).all();
     const lineItemsStmt = db.prepare(`
@@ -8570,16 +8579,18 @@ ipcHandlerRegistry.set('get-shopify-orders', getShopifyOrdersHandler);
 /**
  * Cheap count query for the Orders pane's edge-tab badge - avoids pulling
  * every order + line item (getShopifyOrdersHandler) just to show a number.
- * "Needs attention" for Phase A = any open order (local_status not yet
- * printed/shipped - Phase B/C aren't built, so today that's every synced
- * order) plus a separate unmatched-line count so the badge can flag
- * reconciliation work distinctly from "ready to print".
+ * "Needs attention" = any order not yet marked shipped through
+ * Printventory itself (local_status != 'shipped') - a fully-printed order
+ * still counts as open, since it still needs the fulfillment push; only a
+ * confirmed Printventory shipment clears it - plus a separate
+ * unmatched-line count so the badge can flag reconciliation work
+ * distinctly from "ready to print".
  */
 async function getShopifyOrdersBadgeCountHandler() {
   try {
     const openOrders = db.prepare(`
       SELECT COUNT(*) AS c FROM shopify_orders
-      WHERE local_status NOT IN ('printed', 'shipped')
+      WHERE local_status != 'shipped'
     `).get().c;
     const unmatchedLines = db.prepare(`
       SELECT COUNT(*) AS c FROM shopify_order_line_items
