@@ -11668,13 +11668,29 @@ body.is-panel-resizing * {
 
 .shopify-variant-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1.5fr) minmax(100px, 1fr) minmax(80px, 0.8fr) minmax(80px, 0.8fr);
+  grid-template-columns: minmax(120px, 1.5fr) minmax(100px, 1fr) minmax(80px, 0.8fr) minmax(80px, 0.8fr) minmax(60px, 0.6fr);
   gap: 10px;
   padding: 8px 10px;
   background: rgba(255, 255, 255, 0.03);
   border-radius: 5px;
   align-items: center;
   font-size: 0.9em;
+}
+
+.shopify-variant-file {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shopify-variant-file .open-file-btn {
+  width: 100%;
+  text-align: center;
+}
+
+.variant-file-none {
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 0.85em;
 }
 
 .shopify-variant-row.header {

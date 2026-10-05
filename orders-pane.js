@@ -281,6 +281,7 @@
   }
 
   const COMBOBOX_RESULT_LIMIT = 50;
+  const COMBOBOX_BROWSE_CAP = 300; // click-to-browse-all cap; typing narrows below this via fuzzy search
   const HIGHLIGHT_CLASS = 'order-line-combobox-item-active';
 
   function closeCombobox(container) {
@@ -291,21 +292,30 @@
     }
   }
 
-  async function handleComboboxInput(input) {
-    const container = input.closest('.order-line-combobox');
-    const resultsEl = container?.querySelector('.order-line-combobox-results');
+  /**
+   * Two ways into the same dropdown, per James's feedback: click/focus the
+   * (empty) box and scroll a full list, OR type and have that same list
+   * filter live. An empty query renders the first COMBOBOX_BROWSE_CAP models
+   * (there can be thousands - unbounded would be a DOM-perf problem) with a
+   * note if more exist; a non-empty query runs the existing fuzzy search.
+   */
+  async function showComboboxResults(container, resultsEl, query) {
     if (!resultsEl) return;
 
-    const query = input.value.trim();
-    if (!query) {
-      resultsEl.hidden = true;
-      resultsEl.innerHTML = '';
-      return;
-    }
-
     try {
-      const fuse = await ensureModelsFuse();
-      const matches = fuse.search(query, { limit: COMBOBOX_RESULT_LIMIT });
+      let matches;
+      let moreNote = '';
+
+      if (!query) {
+        const models = await ensureModelsCache();
+        matches = models.slice(0, COMBOBOX_BROWSE_CAP).map((item) => ({ item }));
+        if (models.length > COMBOBOX_BROWSE_CAP) {
+          moreNote = `<div class="order-line-combobox-empty">Showing first ${COMBOBOX_BROWSE_CAP} of ${models.length} - type to narrow</div>`;
+        }
+      } else {
+        const fuse = await ensureModelsFuse();
+        matches = fuse.search(query, { limit: COMBOBOX_RESULT_LIMIT });
+      }
 
       if (!matches.length) {
         resultsEl.innerHTML = '<div class="order-line-combobox-empty">No matching models</div>';
@@ -315,12 +325,32 @@
 
       resultsEl.innerHTML = matches.map((m) =>
         `<div class="order-line-combobox-item" data-model-id="${m.item.id}">${escapeHtml(m.item.fileName)}</div>`
-      ).join('');
+      ).join('') + moreNote;
       resultsEl.hidden = false;
     } catch (e) {
       console.error('[OrdersPane] Model search failed:', e);
       resultsEl.innerHTML = '<div class="order-line-combobox-empty">Search failed - see console</div>';
       resultsEl.hidden = false;
+    }
+  }
+
+  async function handleComboboxInput(input) {
+    const container = input.closest('.order-line-combobox');
+    const resultsEl = container?.querySelector('.order-line-combobox-results');
+    await showComboboxResults(container, resultsEl, input.value.trim());
+  }
+
+  /**
+   * Opens the browse-all (or still-filtered, if there's already text)
+   * dropdown on focus/click, rather than requiring a keystroke first.
+   * Skipped if results are already showing, so re-focusing a box that's
+   * mid-search doesn't flicker or redo the same lookup.
+   */
+  function handleComboboxActivate(input) {
+    const container = input.closest('.order-line-combobox');
+    const resultsEl = container?.querySelector('.order-line-combobox-results');
+    if (resultsEl && resultsEl.hidden) {
+      showComboboxResults(container, resultsEl, input.value.trim());
     }
   }
 
@@ -392,11 +422,21 @@
       if (slicerBtn) { handleOpenSlicer(slicerBtn); return; }
       const managerBtn = e.target.closest('[data-action="open-product-manager"]');
       if (managerBtn) { handleOpenProductManager(managerBtn); return; }
+      const linkInput = e.target.closest('[data-action="link-model-input"]');
+      if (linkInput) { handleComboboxActivate(linkInput); return; }
     });
 
     listEl.addEventListener('input', (e) => {
       const input = e.target.closest('[data-action="link-model-input"]');
       if (input) handleComboboxInput(input);
+    });
+
+    // focusin bubbles (focus doesn't) - open the browse-all dropdown as
+    // soon as the box receives focus (tabbing in), not only once typing
+    // starts.
+    listEl.addEventListener('focusin', (e) => {
+      const input = e.target.closest('[data-action="link-model-input"]');
+      if (input) handleComboboxActivate(input);
     });
 
     listEl.addEventListener('keydown', (e) => {

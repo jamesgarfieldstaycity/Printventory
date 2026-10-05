@@ -1300,6 +1300,13 @@ window.refreshLiveShopifyData = async function refreshLiveShopifyData() {
     // Populate variant assignments UI
     await populateVariantAssignments();
 
+    // Fill in the Variants table's File column now that assignment/
+    // suggestion data has loaded (same data the Variant Assignments dialog
+    // above just rendered from) - James wanted an Open button available
+    // from this always-visible table too, not only inside that collapsible
+    // section.
+    renderVariantsTableFileButtons(window._shopifyEditorContext.variantData);
+
     // Initialize split button for multi-file products
     initOpenModelSplitButton();
 
@@ -1654,6 +1661,7 @@ function renderShopifyVariantsTable(variants) {
       <div>SKU</div>
       <div>Price</div>
       <div title="Inventory - syncs to Shopify on push">Stock</div>
+      <div>File</div>
     </div>
   `;
 
@@ -1673,11 +1681,66 @@ function renderShopifyVariantsTable(variants) {
         <div class="shopify-variant-inventory" title="Inventory quantity - syncs to Shopify on push">
           <input type="number" min="0" value="${inventory}" data-field="inventoryQuantity" placeholder="0" data-original="${inventory}">
         </div>
+        <div class="shopify-variant-file" data-variant-id="${v.id}">
+          <!-- Filled in by renderVariantsTableFileButtons() once file-assignment data loads -->
+        </div>
       </div>
     `;
   });
 
   container.innerHTML = html;
+}
+
+/**
+ * Fill in the plain Variants (SKU/Price/Stock) table's File column once
+ * file-assignment data is available. Separate pass because
+ * renderShopifyVariantsTable() above runs straight from raw Shopify
+ * variant data (no file info at all) - the assignment/suggestion data
+ * comes from getProductVariantsWithSuggestions(), fetched by
+ * populateVariantAssignments(), which runs after it.
+ */
+function renderVariantsTableFileButtons(variantData) {
+  const table = document.getElementById('shopify-variants-table');
+  if (!table || !variantData || !variantData.variants) return;
+
+  for (const variant of variantData.variants) {
+    const cell = table.querySelector(`.shopify-variant-file[data-variant-id="${CSS.escape(String(variant.shopify_variant_id))}"]`);
+    if (!cell) continue;
+
+    const suggested = !variant.assignedFile && variant.suggestion ? variant.suggestion.file : null;
+    const file = variant.assignedFile || suggested;
+
+    if (!file) {
+      cell.innerHTML = '<span class="variant-file-none">\u2014</span>';
+      continue;
+    }
+
+    const title = suggested ? `${file.fileName} (suggested, not yet confirmed)` : file.fileName;
+    cell.innerHTML = `<button type="button" class="variant-action-btn open-file-btn" data-file-path="${escapeHtml(file.filePath)}" title="${escapeHtml(title)}">Open</button>`;
+  }
+
+  bindVariantsTableFileButtons(table);
+}
+
+/**
+ * Delegate .open-file-btn clicks inside the plain Variants table. Separate
+ * from attachVariantAssignmentHandlers(), which is scoped to
+ * #shopify-variant-list (the Variant Assignments dialog) only.
+ */
+function bindVariantsTableFileButtons(table) {
+  table.querySelectorAll('.shopify-variant-file .open-file-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const filePath = btn.dataset.filePath;
+      try {
+        await window.electron.openPath(filePath);
+      } catch (err) {
+        console.error('Error opening file:', err);
+        alert('Failed to open file: ' + err.message);
+      }
+    });
+  });
 }
 
 /**
