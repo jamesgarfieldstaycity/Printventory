@@ -1735,8 +1735,10 @@ function stopHttpServer() {
       if (httpServerEpoch === epoch) {
         httpServer = null;
         wsClients = null;
-        global.broadcastEvent = null;
-        global.sendEvent = function () {}; // safe no-op until the server is back up
+        // Safe no-ops (not null) until the server is back up, so a caller that
+        // lands in the stop/restart window can't throw "is not a function".
+        global.broadcastEvent = function () {};
+        global.sendEvent = function () {};
       }
       resolve();
     });
@@ -1754,8 +1756,8 @@ function stopHttpServer() {
         httpServer = null;
         wsClients = null;
         wss = null;
-        global.broadcastEvent = null;
-        global.sendEvent = function () {}; // safe no-op until the server is back up
+        global.broadcastEvent = function () {}; // safe no-op until the server is back up
+        global.sendEvent = function () {};
         resolve();
       }
     }, 5000);
@@ -11723,8 +11725,11 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
         try {
           console.log('Download clicked for file:', filePaths[0]);
           // Send download event to renderer
-          // In server mode, use broadcastEvent to send to all WebSocket clients
-          if (global.broadcastEvent) {
+          // In server mode, use broadcastEvent to send to all WebSocket clients.
+          // Gated on isServerMode: desktop mode can also have an HTTP server up
+          // (MCP), and after it stops broadcastEvent is a no-op rather than null,
+          // so the truthiness check alone would swallow the desktop path below.
+          if (isServerMode && global.broadcastEvent) {
             console.log('Broadcasting download-model event via WebSocket');
             global.broadcastEvent('download-model', filePaths[0]);
           } else {
