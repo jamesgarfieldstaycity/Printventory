@@ -360,6 +360,32 @@ let wss = null; // WebSocket server
 let wsClients = null; // WebSocket clients Set
 let letsEncryptRenewInFlight = false;
 
+// global.sendEvent is meant to be a safe "fire-and-forget" notifier (see its
+// real definition at the end of startHttpServer, which replaces this default
+// once the HTTP/WebSocket server is actually up) - several IPC handlers
+// (e.g. syncShopifyOrdersHandler) call it as the very last step after their
+// real work is already done and committed, specifically so a notification
+// failure can never make an otherwise-successful operation look like it
+// failed. That held up fine once the server was running, but global.sendEvent
+// did not exist at all until startHttpServer() finished setting it up, and
+// got reset to null again on every server stop/restart (see stopHttpServer) -
+// so a call landing in either of those windows threw "global.sendEvent is
+// not a function" straight through the IPC bridge, turning a real DB write
+// that had already succeeded (e.g. a completed Shopify orders sync) into
+// what looked like a failed one. Defining it here as an always-safe no-op
+// default closes that gap permanently: startHttpServer's real implementation
+// still overwrites this as soon as the server is ready, and stopHttpServer
+// can keep resetting it to this same safe default instead of to null.
+global.sendEvent = function (event, channel, ...args) {
+  if (isServerMode && global.broadcastEvent) {
+    global.broadcastEvent(channel, ...args);
+  } else if (event && event.sender && !event.sender.isDestroyed()) {
+    event.sender.send(channel, ...args);
+  }
+  // No server/window to notify yet (or any more) - safe to drop silently,
+  // matching the "fire-and-forget" intent at every call site.
+};
+
 // Store pending context menu actions for server mode (browser access)
 const pendingContextMenus = new Map();
 let contextMenuRequestIdCounter = 0;
@@ -1715,7 +1741,7 @@ function stopHttpServer() {
         httpServer = null;
         wsClients = null;
         global.broadcastEvent = null;
-        global.sendEvent = null;
+        global.sendEvent = function () {}; // safe no-op until the server is back up
       }
       resolve();
     });
@@ -1734,7 +1760,7 @@ function stopHttpServer() {
         wsClients = null;
         wss = null;
         global.broadcastEvent = null;
-        global.sendEvent = null;
+        global.sendEvent = function () {}; // safe no-op until the server is back up
         resolve();
       }
     }, 5000);

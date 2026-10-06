@@ -26682,7 +26682,9 @@ function createModelItem(model, viewMode = null, thumbPriority = THUMB_PRIORITY_
     item.addEventListener('dblclick', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      if (typeof window.openShopifyProductEditor === 'function') {
+      if (typeof window.openShopifyProductEditorForPath === 'function') {
+        window.openShopifyProductEditorForPath(model.filePath);
+      } else if (typeof window.openShopifyProductEditor === 'function') {
         window.openShopifyProductEditor();
       }
     });
@@ -26758,7 +26760,9 @@ function createModelItem(model, viewMode = null, thumbPriority = THUMB_PRIORITY_
     item.addEventListener('dblclick', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      if (typeof window.openShopifyProductEditor === 'function') {
+      if (typeof window.openShopifyProductEditorForPath === 'function') {
+        window.openShopifyProductEditorForPath(model.filePath);
+      } else if (typeof window.openShopifyProductEditor === 'function') {
         window.openShopifyProductEditor();
       }
     });
@@ -27194,7 +27198,9 @@ function createModelItem(model, viewMode = null, thumbPriority = THUMB_PRIORITY_
   item.addEventListener('dblclick', (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
-    if (typeof window.openShopifyProductEditor === 'function') {
+    if (typeof window.openShopifyProductEditorForPath === 'function') {
+      window.openShopifyProductEditorForPath(model.filePath);
+    } else if (typeof window.openShopifyProductEditor === 'function') {
       window.openShopifyProductEditor();
     }
   });
