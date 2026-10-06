@@ -43,6 +43,7 @@
     "test:support-logs": "node support-logs.test.js",
     "test:full": "playwright test full-app-e2e.spec.js",
     "test:server-guardrails": "playwright test tests/server-mode-",
+    "test:build-files": "node scripts/check-build-files-completeness.js",
     "test:dedup-stress": "node tests/dedup-stress-test.js"
   },
   "author": "TechJeeper Designs",
