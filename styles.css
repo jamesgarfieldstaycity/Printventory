@@ -448,12 +448,6 @@ body.server-mode .sidebar-hover-trigger {
 body.server-mode .main-content {
   margin-top: calc(30px + var(--toolbar-height, 56px));
 }
-/* A browser session cannot launch a local slicer, so hide that control. */
-body.server-mode #preview-send-to-slicer,
-body.server-mode #preview-slicer-menu {
-  display: none !important;
-}
-
 #logo {
   width: 65%;
   height: auto;

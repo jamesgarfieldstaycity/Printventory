@@ -581,25 +581,6 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
-    name: 'list_slicers',
-    description: 'List configured slicers (id, name, path).',
-    inputSchema: { type: 'object', properties: {} }
-  },
-  {
-    name: 'open_in_slicer',
-    description: 'Open one or more models in a configured slicer. Desktop launches locally; server mode sends a client command.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        id: { type: 'integer' },
-        filePath: { type: 'string' },
-        filePaths: { type: 'array', items: { type: 'string' } },
-        slicerId: { type: 'integer' },
-        slicerName: { type: 'string' }
-      }
-    }
-  },
-  {
     name: 'move_files',
     description: 'Move model files to a destination folder and update library paths. Requires confirm: true. Zip entries are not moved.',
     inputSchema: {
@@ -846,10 +827,6 @@ async function callTool(name, args, ctx) {
       return ctx.removeModel(a);
     case 'trash_file':
       return ctx.trashFile(a);
-    case 'list_slicers':
-      return ctx.listSlicers();
-    case 'open_in_slicer':
-      return ctx.openInSlicer(a);
     case 'move_files':
       return ctx.moveFiles(a);
     case 'export_library':

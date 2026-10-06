@@ -73,8 +73,6 @@ function mockCtx(overrides) {
     scanDirectory: async (args) => ({ success: true, directory: args.directory }),
     removeModel: async (args) => ({ success: true, confirm: args.confirm }),
     trashFile: async (args) => ({ success: true, confirm: args.confirm }),
-    listSlicers: async () => [],
-    openInSlicer: async () => ({ success: true }),
     moveFiles: async () => ({ success: true }),
     exportLibrary: async () => ({ success: true }),
     backupDatabase: async () => ({ success: true }),

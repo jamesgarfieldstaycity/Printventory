@@ -720,12 +720,11 @@ test.describe('Printventory full application E2E', () => {
     await expect(window.locator('#file-type-settings-dialog')).not.toBeVisible();
   });
 
-  test('Tools: Browser Extension, MCP Server; Settings: Theme, Performance, STL Home, Slicer, AI Config', async () => {
+  test('Tools: Browser Extension, MCP Server; Settings: Theme, Performance, STL Home, AI Config', async () => {
     const dialogs = [
       { id: 'settings-dialog', cancel: '#cancel-settings', extra: '#ui-theme' },
       { id: 'performance-settings-dialog', cancel: '#cancel-performance-settings', extra: '#max-file-size' },
       { id: 'stl-home-dialog', cancel: '#cancel-stl-home-button', extra: '#stl-home-directories-list' },
-      { id: 'slicer-dialog', cancel: '#cancel-slicer-settings', extra: '#add-slicer-button' },
       { id: 'browser-extension-settings-dialog', cancel: '#cancel-browser-extension-settings', extra: '#extension-inbox-directory' },
       { id: 'mcp-server-settings-dialog', cancel: '#cancel-mcp-server-settings', extra: '#mcp-server-url' },
       { id: 'ai-config-dialog', cancel: '#cancel-ai-config', extra: '#test-ai-config' }

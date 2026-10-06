@@ -680,19 +680,12 @@
     'getModelsWithoutThumbnails': 'get-models-without-thumbnails',
     'getModelsWithDefaultThumbnails': 'get-models-with-default-thumbnails',
     'fetchMakerWorldPage': 'fetch-makerworld-page',
-    'getSlicers': 'get-slicers',
-    'detectSlicers': 'detect-slicers',
-    'openFileInSlicer': 'open-file-in-slicer',
-    'saveSlicer': 'save-slicer',
-    'deleteSlicer': 'delete-slicer',
-    'clearAndSaveSlicers': 'clear-and-save-slicers',
     'getFileStats': 'get-file-stats',
     'startTransaction': 'database:start-transaction',
     'commitTransaction': 'database:commit-transaction',
     'rollbackTransaction': 'database:rollback-transaction',
     'getAllModelReferences': 'get-all-model-references',
     'showInputDialog': 'show-input-dialog',
-    'openSlicerDialog': 'open-slicer-dialog',
     'openExternal': 'open-external',
     'quitApp': 'quitApp',
     'showContextMenu': 'show-context-menu',
@@ -845,11 +838,9 @@
     window.electron.on('open-stl-home', callback);
   };
   
-  window.electron.onOpenSlicerSettings = function(callback) {
-    window.electron.on('open-slicer-settings', callback);
-  };
-  
-  // Handle client-side command execution (for server mode)
+  // Handle client-side command execution (for server mode). "open-file"
+  // downloads the model so this browser's own OS opens it with its default
+  // application (replaces the old per-server "Open in Slicer" flow).
   window.electron.on('execute-client-command', async (commandData) => {
     try {
       if (!commandData || !commandData.type) {
@@ -857,52 +848,22 @@
         return;
       }
 
-      const { type, filePath, slicerName, slicerPath, isZipEntry, zipPath, entryPath } = commandData;
+      const { type, filePath, filePaths } = commandData;
 
       if (type === 'open-file') {
-        // For browser clients, try to download and open, or show message
-        console.log('[Bridge] Open file requested:', filePath);
-        // Trigger download which browser can then open
-        window.electron.on('download-model', async (path) => {
-          // This will trigger the download handler
+        const paths = Array.isArray(filePaths) && filePaths.length ? filePaths : (filePath ? [filePath] : []);
+        paths.forEach((p) => {
+          console.log('[Bridge] Open file requested:', p);
+          const encodedPath = encodeURIComponent(p);
+          const downloadUrl = `/api/download/${encodedPath}`;
+          const link = document.createElement('a');
+          link.href = downloadUrl;
+          link.download = '';
+          link.style.display = 'none';
+          document.body.appendChild(link);
+          link.click();
+          setTimeout(() => link.remove(), 100);
         });
-        // Trigger download
-        const encodedPath = encodeURIComponent(filePath);
-        const downloadUrl = `/api/download/${encodedPath}`;
-        const link = document.createElement('a');
-        link.href = downloadUrl;
-        link.download = '';
-        link.style.display = 'none';
-        document.body.appendChild(link);
-        link.click();
-        setTimeout(() => link.remove(), 100);
-      } else if (type === 'open-in-slicer') {
-        if (window.PrintventorySlicerProtocol) {
-          try {
-            window.PrintventorySlicerProtocol.launchFromCommand(commandData);
-          } catch (error) {
-            alert(`Could not send to slicer:\n${error.message}`);
-          }
-          return;
-        }
-        // Helper script was not loaded. Show the manual steps.
-        console.log('[Bridge] Open in slicer requested:', filePath, slicerName);
-        let message = `To open this file in ${slicerName}:\n\n`;
-        
-        if (isZipEntry && zipPath && entryPath) {
-          message += `1. Download the ZIP file: ${zipPath}\n`;
-          message += `2. Extract ${entryPath} from the ZIP\n`;
-          message += `3. Open ${entryPath} in ${slicerName}\n\n`;
-        } else {
-          message += `1. Download the file (use the Download option)\n`;
-          message += `2. Open ${slicerName} on your workstation\n`;
-          message += `3. Open the downloaded file in ${slicerName}\n\n`;
-          message += `File: ${filePath}\n`;
-        }
-        
-        message += `Slicer Path: ${slicerPath}`;
-        
-        alert(message);
       }
     } catch (error) {
       console.error('[Bridge] Error handling client command:', error);
@@ -1092,12 +1053,6 @@
   } else {
     console.log('[Bridge] ✓ receive method exists');
   }
-  if (typeof window.electron.onOpenSlicerSettings !== 'function') {
-    console.error('[Bridge] ERROR: onOpenSlicerSettings method not created!');
-  } else {
-    console.log('[Bridge] ✓ onOpenSlicerSettings method exists');
-  }
-  
   // Signal that bridge is ready
   window._electronBridgeReady = true;
   console.log('[Bridge] Server bridge initialized, all methods available. Total methods:', Object.keys(window.electron).length);

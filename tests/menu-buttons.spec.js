@@ -102,16 +102,6 @@ test.describe('Scan then menu and button checks', () => {
     await closeDialog('performance-settings-dialog', 'button#cancel-performance-settings');
   });
 
-  test('Settings > Slicer Path: dialog and buttons', async () => {
-    await openDialog('slicer-dialog');
-    await expect(window.locator('#slicer-dialog')).toBeVisible();
-    await expect(window.locator('#save-slicer-settings')).toBeVisible();
-    await expect(window.locator('#cancel-slicer-settings')).toBeVisible();
-    await expect(window.locator('#add-slicer-button')).toBeVisible();
-    await expect(window.locator('#detect-slicers-button')).toBeVisible();
-    await closeDialog('slicer-dialog', 'button#cancel-slicer-settings');
-  });
-
   test('Settings > STL Home: dialog and buttons', async () => {
     await openDialog('stl-home-dialog');
     await expect(window.locator('#stl-home-dialog')).toBeVisible();

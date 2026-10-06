@@ -788,31 +788,6 @@
         </div>
       </form>
     </dialog>
-    <dialog id="slicer-dialog" class="modal">
-      <form method="dialog">
-        <h3>Slicer Settings</h3>
-        <div id="slicer-list">
-          <!-- Slicer entries will be added here dynamically -->
-        </div>
-        <div class="slicer-list-actions">
-          <button type="button" id="add-slicer-button" class="full-width-button">Add New Slicer</button>
-          <button type="button" id="detect-slicers-button" class="full-width-button">Auto Detect</button>
-        </div>
-        <p id="slicer-detect-status" class="setting-description" hidden></p>
-        <div id="slicer-helper-install" hidden>
-          <p class="setting-description">Send to Slicer uses a helper on this computer. Download the package for this server, unzip it, and run the installer. If Node.js is missing, the installer downloads it.</p>
-          <div class="form-group checkbox-container" id="slicer-helper-insecure-row" hidden>
-            <input type="checkbox" id="slicer-helper-insecure">
-            <label for="slicer-helper-insecure">This server uses a self-signed certificate</label>
-          </div>
-          <button type="button" id="download-slicer-helper" class="full-width-button">Download helper for this server</button>
-        </div>
-        <div class="dialog-buttons">
-          <button type="button" id="save-slicer-settings">Save</button>
-          <button type="button" id="cancel-slicer-settings" onclick="document.getElementById('slicer-dialog')?.close()">Cancel</button>
-        </div>
-      </form>
-    </dialog>
     <dialog id="file-type-settings-dialog" class="modal">
       <form method="dialog">
         <h3>File Type Settings</h3>
@@ -1858,8 +1833,8 @@
           </div>
           <div class="preview-controls">
             <div class="preview-control-group">
-              <button type="button" id="preview-send-to-slicer" class="preview-control-button preview-slicer-button" title="Open in slicer">
-                <span>🖨️</span> Send to Slicer
+              <button type="button" id="preview-send-to-slicer" class="preview-control-button" title="Open file">
+                <span>🖨️</span> Open File
               </button>
               <button type="button" id="preview-reset-view" class="preview-control-button" title="Reset View">
                 <span>🔄</span> Reset View
@@ -1871,7 +1846,6 @@
                 <span>💾</span> Save Image
               </button>
             </div>
-            <div id="preview-slicer-menu" class="preview-slicer-menu hidden" role="menu" aria-label="Choose slicer"></div>
             <div id="preview-save-menu" class="preview-slicer-menu hidden" role="menu" aria-label="Save preview image">
               <button type="button" class="preview-slicer-menu-item" id="preview-save-with-backdrop">Save with backdrop</button>
               <button type="button" class="preview-slicer-menu-item" id="preview-save-transparent">Save transparent PNG</button>
@@ -3369,7 +3343,6 @@ docker run -d --name printventory-server -p 5000:5000 -v printventory-data:/root
     });
   </script>
   <script src="thumbnail-progress.js"></script>
-  <script src="slicer-protocol.js"></script>
   <script src="preview.js"></script>
   <script src="query-builder.js"></script>
   <script src="search.js"></script>
@@ -3387,28 +3360,9 @@ docker run -d --name printventory-server -p 5000:5000 -v printventory-data:/root
   <script src="printer-management.js"></script>
   <script src="parts-stock.js"></script>
   <script src="print-history.js"></script>
-  <script type="module" src="slicer.js"></script>
   <script src="guide.js"></script>
   <script src="pwa.js"></script>
   <script src="mobile-ui.js"></script>
-
-  <!-- Add this template for slicer entries -->
-  <template id="slicer-entry-template">
-    <div class="slicer-entry">
-      <div class="form-group slicer-entry-fields">
-        <label class="slicer-field-label">Name</label>
-        <input type="text" class="slicer-name" placeholder="e.g. Orca Slicer" autocomplete="off">
-        <label class="slicer-field-label">Path</label>
-        <div class="input-with-icon">
-          <input type="text" class="slicer-path" placeholder="Select slicer path..." autocomplete="off">
-          <button type="button" class="browse-slicer-button icon-button" title="Browse for slicer">
-            <img src="file-icon.png" alt="Browse">
-          </button>
-          <button type="button" class="remove-slicer-button icon-button" title="Remove slicer">×</button>
-        </div>
-      </div>
-    </div>
-  </template>
   <script>
     document.getElementById('dismiss-welcome')?.addEventListener('click', () => {
       const welcomeDialog = document.getElementById('welcome-message');

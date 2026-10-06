@@ -70,7 +70,7 @@ const earlyEventChannels = [
   'open-theme-settings', 'clear-new-flags', 'regenerate-thumbnails', 'generate-missing-thumbnails',
   'start-print-roulette', 'open-dedup', 'open-tag-manager', 'open-filament-manager', 'open-printer-management', 'open-parts-stock', 'open-stats',
   'open-backup-restore', 'open-ai-config', 'open-file-type-settings', 'open-performance-settings',
-  'open-slicer-settings', 'open-browser-extension-settings', 'open-mcp-server-settings', 'open-https-settings', 'open-shopify-settings', 'open-purge-models',
+  'open-browser-extension-settings', 'open-mcp-server-settings', 'open-https-settings', 'open-shopify-settings', 'open-purge-models',
   'open-metadata-editor', 'open-system-report', 'open-manage-thumbnails',
   'open-settings', 'open-guide', 'open-about', 'open-keyboard-shortcuts',
   'open-server-mode-info',
@@ -1472,7 +1472,7 @@ async function populateVariantAssignments() {
               </div>
               <div class="variant-buttons">
                 <button type="button" class="variant-action-btn replace-file-btn" data-variant-id="${variant.shopify_variant_id}" data-option-value="${escapeHtml(variant.option_value || '')}">Replace</button>
-                <button type="button" class="variant-action-btn open-file-btn" data-file-path="${escapeHtml(variant.assignedFile.filePath)}" title="Open in slicer">Open</button>
+                <button type="button" class="variant-action-btn open-file-btn" data-file-path="${escapeHtml(variant.assignedFile.filePath)}" title="Open file">Open</button>
                 <button type="button" class="variant-action-btn unlink-file-btn" data-variant-id="${variant.shopify_variant_id}" data-option-value="${escapeHtml(variant.option_value || '')}" title="Remove this file assignment">Unlink</button>
               </div>
             ` : hasSuggestion ? `
@@ -1572,12 +1572,7 @@ function attachVariantAssignmentHandlers(container, data, folderPath, countEl) {
       e.preventDefault();
       e.stopPropagation();
       const filePath = btn.dataset.filePath;
-      try {
-        await window.electron.openPath(filePath);
-      } catch (err) {
-        console.error('Error opening file:', err);
-        alert('Failed to open file: ' + err.message);
-      }
+      await window.openModelFile(filePath);
     });
   });
 
@@ -1771,12 +1766,7 @@ function bindVariantsTableFileButtons(table) {
       e.preventDefault();
       e.stopPropagation();
       const filePath = btn.dataset.filePath;
-      try {
-        await window.electron.openPath(filePath);
-      } catch (err) {
-        console.error('Error opening file:', err);
-        alert('Failed to open file: ' + err.message);
-      }
+      await window.openModelFile(filePath);
     });
   });
 }
@@ -2298,7 +2288,52 @@ function initShopifyTagCounters() {
 }
 
 /**
- * Open the model file with the OS default application.
+ * Opens a model file with this computer's own OS default application for its
+ * extension. Works the same in desktop and server mode: in server mode this
+ * always acts on the browser/workstation currently viewing the page, never on
+ * the Printventory server itself (replaces the old "Open in Slicer" flow).
+ */
+window.openModelFile = async function openModelFile(filePaths) {
+  const paths = (Array.isArray(filePaths) ? filePaths : [filePaths]).filter(Boolean);
+  if (!paths.length) return;
+
+  const serverMode = await window.electron?.isServerMode?.().catch(() => false);
+
+  for (const filePath of paths) {
+    if (!serverMode) {
+      try {
+        await window.electron.openPath(filePath);
+      } catch (error) {
+        console.error('Error opening file:', error);
+        alert(`Failed to open file: ${error.message}`);
+      }
+      continue;
+    }
+
+    // Server mode: act locally on this client, never ask the server to open it.
+    try {
+      if (window.electron && typeof window.electron.invoke === 'function') {
+        const result = await window.electron.invoke('execute-client-command', { type: 'open-file', filePath });
+        if (result && result.success) continue;
+      }
+    } catch (ipcError) {
+      console.log('IPC handler not available, falling back to download:', ipcError);
+    }
+
+    // Plain browser client: trigger a download so the OS/browser opens it with its own default app.
+    const encodedPath = encodeURIComponent(filePath);
+    const link = document.createElement('a');
+    link.href = `/api/download/${encodedPath}`;
+    link.download = '';
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => link.remove(), 100);
+  }
+};
+
+/**
+ * Open the current Shopify editor model with the OS default application.
  */
 window.openModelInSlicer = async function openModelInSlicer() {
   const modelPath = window._shopifyEditorContext.modelPath;
@@ -2306,13 +2341,7 @@ window.openModelInSlicer = async function openModelInSlicer() {
     alert('No model path available.');
     return;
   }
-
-  try {
-    await window.electron.openPath(modelPath);
-  } catch (e) {
-    console.error('Error opening model:', e);
-    alert(`Failed to open model: ${e.message}`);
-  }
+  await window.openModelFile(modelPath);
 };
 
 /**
@@ -10701,13 +10730,6 @@ async function createServerMenuBar() {
         window.electron.send('open-performance-settings');
       }
     }},
-    { label: 'Slicer', action: async () => {
-      if (typeof window.openSlicerSettings === 'function') {
-        await window.openSlicerSettings();
-        return;
-      }
-      window.electron.send('open-slicer-settings');
-    }},
     { label: 'STL Home', action: async () => {
       await window.openSTLHomeDialog();
     }},
@@ -17636,7 +17658,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Handle client-side command execution (for server mode)
+  // Handle client-side command execution (for server mode).
+  // "open-file" hands the file to this browser's/workstation's own OS default
+  // application for its extension (replaces the old per-server slicer list).
   window.electron.on('execute-client-command', async (commandData) => {
     try {
       if (!commandData || !commandData.type) {
@@ -17644,43 +17668,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
       }
 
-      const { type, filePath, slicerName, slicerPath, isZipEntry, zipPath, entryPath } = commandData;
+      const { type, filePath, filePaths, isZipEntry, zipPath, entryPath } = commandData;
 
       if (type === 'open-file') {
-        // Try to open file using Electron IPC handler first, then fallback to download
-        try {
-          // Try IPC handler (works for Electron clients)
-          if (window.electron && typeof window.electron.invoke === 'function') {
-            try {
-              const result = await window.electron.invoke('execute-client-command', commandData);
-              if (result && result.success) {
-                console.log('File opened successfully via IPC');
-                return;
-              }
-            } catch (ipcError) {
-              console.log('IPC handler not available, trying direct method:', ipcError);
-            }
-          }
-          
-          // Try direct openPath (works for Electron clients with preload)
-          if (window.electron && typeof window.electron.openPath === 'function') {
-            await window.electron.openPath(filePath);
-          } else {
-            // Browser context - trigger download so user can open it
-            const encodedPath = encodeURIComponent(filePath);
-            const downloadUrl = `/api/download/${encodedPath}`;
-            const link = document.createElement('a');
-            link.href = downloadUrl;
-            link.download = '';
-            link.style.display = 'none';
-            document.body.appendChild(link);
-            link.click();
-            setTimeout(() => link.remove(), 100);
-          }
-        } catch (error) {
-          console.error('Error opening file:', error);
-          // Fallback: trigger download
-          const encodedPath = encodeURIComponent(filePath);
+        const paths = Array.isArray(filePaths) && filePaths.length ? filePaths : (filePath ? [filePath] : []);
+
+        const downloadFallback = (p) => {
+          const encodedPath = encodeURIComponent(p);
           const downloadUrl = `/api/download/${encodedPath}`;
           const link = document.createElement('a');
           link.href = downloadUrl;
@@ -17689,163 +17683,40 @@ document.addEventListener('DOMContentLoaded', async () => {
           document.body.appendChild(link);
           link.click();
           setTimeout(() => link.remove(), 100);
-        }
-      } else if (type === 'open-in-slicer') {
-        if (window._electronBridgeReady && window.PrintventorySlicerProtocol) {
+        };
+
+        for (const p of paths) {
           try {
-            window.PrintventorySlicerProtocol.launchFromCommand(commandData);
-          } catch (error) {
-            alert(`Could not send to slicer:\n${error.message}`);
-          }
-          return;
-        }
-
-        // Try to execute slicer command on client machine
-        // For Electron clients, use IPC handler; for browser clients, show instructions
-        
-        try {
-          // Try IPC handler first (works for Electron clients accessing server)
-          if (window.electron && typeof window.electron.invoke === 'function') {
-            try {
-              const result = await window.electron.invoke('execute-client-command', commandData);
-              if (result && result.success) {
-                console.log('Slicer command executed successfully via IPC');
-                return;
-              } else if (result && result.error) {
-                alert(`Error opening file in ${slicerName}:\n${result.error}\n\n` +
-                  `File: ${filePath}\n` +
-                  `Slicer: ${slicerPath}`);
-                return;
-              }
-            } catch (ipcError) {
-              console.log('IPC handler failed, trying direct execution:', ipcError);
-            }
-          }
-          
-          // Fallback: Try direct Node.js execution (if available in Electron renderer)
-          const hasNodeAccess = typeof window !== 'undefined' && typeof require !== 'undefined';
-          
-          if (hasNodeAccess) {
-            try {
-              const { exec } = require('child_process');
-              const rawPaths = Array.isArray(commandData.filePaths) && commandData.filePaths.length
-                ? commandData.filePaths
-                : [filePath];
-              const modelPaths = isZipEntry && zipPath && entryPath && rawPaths.length === 1
-                ? null
-                : rawPaths.filter(Boolean);
-
-              if (!modelPaths) {
-                alert(`To open a file from a ZIP archive in your slicer:\n\n` +
-                  `1. Download the ZIP file: ${zipPath}\n` +
-                  `2. Extract ${entryPath} from the ZIP\n` +
-                  `3. Open ${entryPath} in ${slicerName}\n\n` +
-                  `Slicer: ${slicerPath}`);
-                return;
-              }
-
-              const command = buildSlicerLaunchCommand(slicerPath, modelPaths);
-              
-              exec(command, (error) => {
-                const failedToStart = error && (
-                  error.code === 'ENOENT' ||
-                  error.code === 'ENOTDIR' ||
-                  /ENOENT|not recognized|No such file or directory/i.test(String(error.message || ''))
-                );
-                if (failedToStart) {
-                  console.error('Error executing slicer on client:', error);
-                  alert(`Error opening file in ${slicerName}:\n${error.message}\n\n` +
-                    `File(s): ${modelPaths.join(', ')}\n` +
-                    `Slicer: ${slicerPath}\n\n` +
-                    `Please try opening the file manually.`);
-                } else if (error) {
-                  // Already-running slicers often exit non-zero after handing the file to the open window.
-                  console.warn('Slicer process exited after launch:', error.message);
-                } else {
-                  console.log('Successfully executed slicer command on client');
+            // Try IPC handler first (works for Electron clients)
+            if (window.electron && typeof window.electron.invoke === 'function') {
+              try {
+                const result = await window.electron.invoke('execute-client-command', { type: 'open-file', filePath: p, isZipEntry, zipPath, entryPath });
+                if (result && result.success) {
+                  console.log('File opened successfully via IPC');
+                  continue;
                 }
-              });
-              return; // Successfully started execution
-            } catch (execError) {
-              console.error('Cannot execute command directly:', execError);
-              // Fall through to show instructions
+              } catch (ipcError) {
+                console.log('IPC handler not available, trying direct method:', ipcError);
+              }
             }
+
+            // Try direct openPath (works for Electron clients with preload)
+            if (window.electron && typeof window.electron.openPath === 'function') {
+              await window.electron.openPath(p);
+            } else {
+              // Browser context - trigger download so the OS/browser opens it with its own default app
+              downloadFallback(p);
+            }
+          } catch (error) {
+            console.error('Error opening file:', error);
+            downloadFallback(p);
           }
-          
-          // Browser client or no Node.js access - show instructions
-          showSlicerInstructions(filePath, slicerName, slicerPath, isZipEntry, zipPath, entryPath);
-        } catch (error) {
-          console.error('Error executing slicer command:', error);
-          showSlicerInstructions(filePath, slicerName, slicerPath, isZipEntry, zipPath, entryPath);
         }
       }
     } catch (error) {
       console.error('Error handling client command:', error);
     }
   });
-
-  function escapeSlicerShellArg(filePath) {
-    return `"${String(filePath).replace(/"/g, '\\"')}"`;
-  }
-
-  function getDarwinSlicerAppBundlePath(slicerPath) {
-    if (!slicerPath || process.platform !== 'darwin') return null;
-    const normalized = String(slicerPath).replace(/\\/g, '/');
-    if (/\.app$/i.test(normalized)) return normalized;
-    const match = normalized.match(/^(.*?\.app)\//i);
-    return match ? match[1] : null;
-  }
-
-  // PrusaSlicer / SuperSlicer / Slic3r accept --single-instance; Bambu / Orca / Snapmaker Orca reject it.
-  function slicerSupportsSingleInstanceFlag(slicerPath) {
-    const raw = String(slicerPath || '').toLowerCase();
-    if (/bambu|orca/.test(raw)) return false;
-    return /prusa|superslicer|slic3r/.test(raw);
-  }
-
-  function buildSlicerLaunchCommand(slicerPath, modelPaths) {
-    const paths = (Array.isArray(modelPaths) ? modelPaths : [modelPaths]).filter(Boolean);
-    const escapedPaths = paths.map(escapeSlicerShellArg).join(' ');
-    const appBundle = getDarwinSlicerAppBundlePath(slicerPath);
-    if (appBundle) {
-      return `open -n -a ${escapeSlicerShellArg(appBundle)} --args ${escapedPaths}`;
-    }
-    const raw = String(slicerPath || '').trim();
-    const flatpak = raw.match(/^flatpak\s+run\s+(\S+)([\s\S]*)$/i);
-    const snap = raw.match(/^snap\s+run\s+(\S+)([\s\S]*)$/i);
-    let command;
-    if (flatpak) {
-      command = `flatpak run ${flatpak[1]}${flatpak[2] || ''}`;
-    } else if (snap) {
-      command = `snap run ${snap[1]}${snap[2] || ''}`;
-    } else {
-      command = escapeSlicerShellArg(raw);
-    }
-    if (slicerSupportsSingleInstanceFlag(raw)) {
-      command += ' --single-instance=0';
-    }
-    return `${command} ${escapedPaths}`;
-  }
-
-  // Helper function to show slicer instructions
-  function showSlicerInstructions(filePath, slicerName, slicerPath, isZipEntry, zipPath, entryPath) {
-    let message = `To open this file in ${slicerName}:\n\n`;
-    
-    if (isZipEntry && zipPath && entryPath) {
-      message += `1. Download the ZIP file: ${zipPath}\n`;
-      message += `2. Extract ${entryPath} from the ZIP\n`;
-      message += `3. Open ${entryPath} in ${slicerName}\n\n`;
-    } else {
-      message += `1. Download the file (use the Download option)\n`;
-      message += `2. Open ${slicerName} on your workstation\n`;
-      message += `3. Open the downloaded file in ${slicerName}\n\n`;
-      message += `File: ${filePath}\n`;
-    }
-    
-    message += `Slicer Path: ${slicerPath}`;
-    
-    alert(message);
-  }
 
     window.electron.on('download-model', async (filePath) => {
       // Prevent duplicate downloads of the same file
@@ -17941,22 +17812,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  window._electronRealEventHandlers['open-slicer-settings'] = async function() {
-    if (typeof window.openSlicerSettings === 'function') {
-      window.openSlicerSettings();
-      return;
-    }
-    const dialog = document.getElementById('slicer-dialog');
-    if (dialog) {
-      try { dialog.showModal(); } catch (err) { console.error('Error opening slicer settings:', err); }
-    }
-  };
-  if (window._electronPendingEvents['open-slicer-settings']) {
-    window._electronPendingEvents['open-slicer-settings'].forEach((args) => {
-      window._electronRealEventHandlers['open-slicer-settings'].apply(null, args);
-    });
-    delete window._electronPendingEvents['open-slicer-settings'];
-  }
 
   // Modify the prompt handler
   async function promptPendingThumbnails() {

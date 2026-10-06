@@ -58,7 +58,6 @@ const guidePages = [
       <li>Change the <strong>Theme</strong> to match your style! 🎨</li>
       <li>Adjust <strong>Performance</strong> settings to optimize your workflow! 🚀</li>
       <li>Set your <strong>STL Home</strong> directories for automatic scans on startup! 🏠</li>
-      <li>Specify the <strong>Slicer Path</strong> to open models directly in your favorite slicer! 🖨️</li>
     </ul>`,
     image: ""
   },
@@ -74,7 +73,7 @@ const guidePages = [
       <li><strong>Backup/Restore</strong> – Safeguard your data with easy backup and restore options! 💾</li>
       <li><strong>De-Dup</strong> – Say goodbye to clutter! Clean up duplicate files in your library, and limit the scan to the models currently in view (designer, tags, search, and other filters) so a large collection does not have to be processed all at once. 🧹</li>
       <li><strong>AI Tagging</strong> – Configure your AI services in <strong>Settings > AI Config</strong> to enable powerful AI-assisted tagging. Cloud providers need an API key; local OpenAI-compatible servers (Ollama, LM Studio, and similar) do not. Tag generation also sees the parent folder names and the model's description. Right-click one or more models for <strong>Generate Tags</strong>, or use <strong>Tag from Folder</strong> to copy those folder names onto the models without calling the AI. 🤖</li>
-      <li><strong>Slicer Integration</strong> – Configure slicers in <strong>Settings</strong> for right-click <strong>Open in Slicer</strong> and the preview dialog <strong>Send to Slicer</strong> button. Sending again while a slicer is open starts a new instance with your model loaded. 🖨️</li>
+      <li><strong>Open File</strong> – Right-click a model, or use the preview dialog’s <strong>Open File</strong> button, to open it with your computer’s own default application for that file type. No slicer configuration needed. 🖨️</li>
       <li><strong>Folder &amp; ZIP bundles</strong> – Multi-part folders and ZIP archives group into one row. Click to expand; right-click <strong>Preview</strong> for an all-parts 3D view; double-click for bundle details. 📦</li>
     </ul>
     Thank you for choosing Printventory! Visit <strong>Help > Support Printventory</strong> to learn how you can support this amazing project!`,
@@ -183,24 +182,8 @@ function prevGuide() {
   }
 }
 
-let serverGuideAdjusted = false;
-
-async function omitSlicerGuideForServerMode() {
-  if (serverGuideAdjusted) return;
-  serverGuideAdjusted = true;
-  const serverMode = await window.electron?.isServerMode?.().catch(() => false);
-  if (!serverMode) return;
-  for (const page of guidePages) {
-    page.content = page.content
-      .replace(', or slice it', '')
-      .replace(/\s*<li>Specify the <strong>Slicer Path<\/strong>[\s\S]*?<\/li>/, '')
-      .replace(/\s*<li><strong>Slicer Integration<\/strong>[\s\S]*?<\/li>/, '');
-  }
-}
-
 // Opens the guide dialog starting at the first page.
 async function showGuide() {
-  await omitSlicerGuideForServerMode();
   currentPage = 0;
   updateGuide();
   const guideDialog = document.getElementById("quickstart-guide");

@@ -153,7 +153,7 @@
    *                      bundle case - e.g. Halloween Ghosts' 8-variant
    *                      "complete set" SKU) -> "Open Product Manager" opens
    *                      that product's existing editor dialog, which lists
-   *                      every variant with its own "open in slicer" action.
+   *                      every variant with its own "open file" action.
    *                      Enabled only when matched_file_path actually
    *                      resolves (the product's primary model file) -
    *                      disabled with an explanatory label otherwise.
@@ -188,7 +188,7 @@
 
     let actionHtml;
     if (li.link_status === 'auto-matched' || li.link_status === 'manually-linked') {
-      actionHtml = `<button type="button" class="order-line-action-btn" data-action="open-slicer" data-path="${escapeHtml(li.matched_file_path || '')}">Open in Slicer</button>`;
+      actionHtml = `<button type="button" class="order-line-action-btn" data-action="open-slicer" data-path="${escapeHtml(li.matched_file_path || '')}">Open File</button>`;
     } else if (li.link_status === 'product-linked') {
       if (li.matched_file_path) {
         actionHtml = `<button type="button" class="order-line-action-btn order-line-action-btn-secondary" data-action="open-product-manager" data-path="${escapeHtml(li.matched_file_path)}">Open Product Manager</button>`;
@@ -225,7 +225,7 @@
 
   /**
    * Mark Printed - only offered for a line whose own file is actually
-   * known (auto-matched/manually-linked), same gating as "Open in Slicer"
+   * known (auto-matched/manually-linked), same gating as "Open File"
    * - a product-linked bundle line is ambiguous at the line level (which
    * variant?) until resolved through the product editor, so no control
    * here for those (see GR-PLAN-006's matching-rule writeup). One click
@@ -438,7 +438,7 @@
   }
 
   // ============================================
-  // Line actions: open in slicer, manual link
+  // Line actions: open file, manual link
   // ============================================
 
   function handleOpenSlicer(btn) {
@@ -450,13 +450,8 @@
     btn.disabled = true;
     const originalLabel = btn.textContent;
     btn.textContent = 'Opening…';
-    window.electron.openFileInSlicer({ filePaths: [path] })
-      .then((result) => {
-        if (result && result.error) {
-          alert(result.error);
-        }
-      })
-      .catch((e) => alert(`Could not open in slicer: ${e.message || e}`))
+    Promise.resolve(window.openModelFile(path))
+      .catch((e) => alert(`Could not open file: ${e.message || e}`))
       .finally(() => {
         btn.disabled = false;
         btn.textContent = originalLabel;
@@ -467,7 +462,7 @@
   // existing Shopify product editor dialog rather than sending James out to
   // Shopify's own site. That dialog already lists every variant on the
   // product (populateVariantAssignments() in renderer.js) with its own
-  // "open in slicer" button, so a bundle line like Halloween Ghosts'
+  // "open file" button, so a bundle line like Halloween Ghosts'
   // 8-variant "complete set" SKU gets a real per-variant action instead of
   // a single guessed file.
   function handleOpenProductManager(btn) {
@@ -710,7 +705,7 @@
 
     // Double-clicking anywhere on a line card opens the product manager
     // for it, as a second, consistent way in regardless of which action
-    // button the card currently shows (Open in Slicer vs. Open Product
+    // button the card currently shows (Open File vs. Open Product
     // Manager) - James: "can double clicking the card open the manage
     // dialog as well?" Skips the manual-link combobox so normal text
     // interactions (e.g. double-click-to-select-a-word) aren't hijacked,

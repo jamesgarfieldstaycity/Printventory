@@ -1320,14 +1320,16 @@ console.log('[Preview] preview.js script loaded');
     const paths = getPreviewSlicerFilePaths();
     button.disabled = paths.length === 0;
     if (paths.length === 0) {
-      button.title = 'No local model to send to slicer';
+      button.title = 'No local model to open';
     } else if (paths.length === 1) {
-      button.title = 'Open this model in your slicer';
+      button.title = 'Open this model with its default application';
     } else {
-      button.title = `Open ${paths.length} models in your slicer`;
+      button.title = `Open ${paths.length} models with their default application`;
     }
   }
 
+  // No-op now that the per-slicer dropdown is gone; kept so older call sites
+  // that still tidy up the (removed) menu element don't need to change.
   function hidePreviewSlicerMenu() {
     const menu = document.getElementById('preview-slicer-menu');
     if (!menu) return;
@@ -1335,117 +1337,18 @@ console.log('[Preview] preview.js script loaded');
     menu.innerHTML = '';
   }
 
-  function showPreviewSlicerMenu(slicers, filePaths) {
-    const menu = document.getElementById('preview-slicer-menu');
-    if (!menu) return;
-
-    menu.innerHTML = '';
-    slicers.forEach((slicer) => {
-      const item = document.createElement('button');
-      item.type = 'button';
-      item.className = 'preview-slicer-menu-item';
-      item.textContent = slicer.name;
-      item.title = slicer.path || slicer.name;
-      item.addEventListener('click', async (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        hidePreviewSlicerMenu();
-        await sendPreviewToSlicer(slicer, filePaths);
-      });
-      menu.appendChild(item);
-    });
-    menu.classList.remove('hidden');
-  }
-
-  async function sendPreviewToSlicer(slicer, filePaths) {
-    if (window._electronBridgeReady && window.PrintventorySlicerProtocol) {
-      try {
-        window.PrintventorySlicerProtocol.launchFromCommand({
-          slicerName: slicer.name,
-          slicerPath: slicer.path,
-          filePaths
-        });
-      } catch (error) {
-        const message = error && error.message ? error.message : String(error);
-        alert(`Could not send to slicer:\n${message}`);
-      }
-      return;
-    }
-
-    if (!window.electron?.openFileInSlicer) {
-      alert('Send to slicer is not available in this mode.');
-      return;
-    }
-
-    try {
-      const result = await window.electron.openFileInSlicer({
-        filePaths,
-        slicerId: slicer.id,
-        slicerName: slicer.name
-      });
-      if (result?.success) {
-        console.log('[Preview] Sent to slicer:', slicer.name, result);
-      }
-    } catch (error) {
-      const message = error && error.message ? error.message : String(error);
-      alert(`Could not send to slicer:\n${message}`);
-    }
-  }
-
-  async function loadConfiguredSlicers() {
-    let slicers = [];
-    try {
-      if (typeof window.electron?.getSlicers === 'function') {
-        slicers = await window.electron.getSlicers();
-      }
-    } catch (error) {
-      console.error('[Preview] Error loading slicers:', error);
-    }
-
-    if (Array.isArray(slicers) && slicers.length === 1 && Array.isArray(slicers[0])) {
-      slicers = slicers[0];
-    }
-
-    slicers = (Array.isArray(slicers) ? slicers : []).filter(
-      (slicer) => slicer && slicer.name && slicer.path
-    );
-
-    if (slicers.length) return slicers;
-
-    try {
-      const legacyPath = await window.electron?.getSetting?.('slicerPath');
-      if (legacyPath) {
-        return [{ id: null, name: 'Slicer', path: legacyPath }];
-      }
-    } catch (error) {
-      console.error('[Preview] Error loading legacy slicer path:', error);
-    }
-
-    return [];
-  }
-
+  // Opens the previewed model(s) with this computer's own default application
+  // for the file extension (replaces the old per-server "Send to Slicer" flow).
   async function handlePreviewSendToSlicer() {
     const filePaths = getPreviewSlicerFilePaths();
     if (!filePaths.length) return;
 
-    hidePreviewSlicerMenu();
-
-    const slicers = await loadConfiguredSlicers();
-
-    if (!slicers.length) {
-      const configure = confirm('No slicer configured. Open Slicer Settings now?');
-      if (configure && typeof window.openSlicerSettings === 'function') {
-        await window.openSlicerSettings();
-      }
+    if (typeof window.openModelFile !== 'function') {
+      alert('Opening files is not available in this mode.');
       return;
     }
 
-    if (slicers.length === 1) {
-      await sendPreviewToSlicer(slicers[0], filePaths);
-      return;
-    }
-
-    showPreviewSlicerMenu(slicers, filePaths);
+    await window.openModelFile(filePaths);
   }
 
   function isPlateLikeSize(size) {
