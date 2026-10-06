@@ -419,6 +419,7 @@ contextBridge.exposeInMainWorld('electron', {
       'start-print-roulette',
       'toggle-filters-pane',
       'toggle-sidebar',
+      'toggle-orders-pane',
     ];
     if (validChannels.includes(channel)) {
       ipcRenderer.on(channel, (event, ...args) => callback(...args));

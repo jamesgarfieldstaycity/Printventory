@@ -4241,6 +4241,18 @@ function createApplicationMenu() {
             }
           }
         },
+        {
+          id: 'orders-pane-toggle',
+          label: 'Orders Pane',
+          type: 'checkbox',
+          checked: false,
+          accelerator: 'CmdOrCtrl+Shift+O',
+          click: (menuItem) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('toggle-orders-pane');
+            }
+          }
+        },
         { type: 'separator' },
         { role: 'resetZoom' },
         { role: 'zoomIn' },

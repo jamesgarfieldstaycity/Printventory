@@ -619,6 +619,10 @@
     window.electron?.on?.('toggle-sidebar', () => {
       toggle('sidebar');
     });
+
+    window.electron?.on?.('toggle-orders-pane', () => {
+      toggle('orders-pane');
+    });
   }
 
   // ============================================

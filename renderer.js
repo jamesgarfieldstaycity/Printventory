@@ -3608,8 +3608,20 @@ async function renderReconciliationList() {
   const html = folders.map(folder => {
     const suggested = findBestMatch(folder.folder_name, availableProducts);
     const matchScore = suggested ? calculateMatchScore(folder.folder_name, suggested.title) : 0;
-    const statusClass = folder.push_status === 'will_create_new' ? 'new' : 'unlinked';
-    const statusText = folder.push_status === 'will_create_new' ? 'Will Create New' : 'Needs Linking';
+    // A folder that was already linked this session (see the in-place cache
+    // update in handleConfirmLink, a few lines below) must render as such on
+    // any re-render that rebuilds this item from reconciliationFoldersCache
+    // (toggling Show Skipped, changing a filter/sort dropdown) - the cache
+    // intentionally keeps linked folders around rather than removing them
+    // (so filter/sort state doesn't jump), but this ternary used to only
+    // ever produce 'new' or 'unlinked', silently reverting a just-linked
+    // folder back to a yellow "Needs Linking" badge with live Confirm
+    // Link/Create New/Skip Folder buttons on the very next re-render -
+    // exactly undoing the link's visual confirmation even though the link
+    // itself was real and already persisted.
+    const isLinked = !!folder.shopify_product_id || folder.push_status === 'linked';
+    const statusClass = isLinked ? 'linked' : (folder.push_status === 'will_create_new' ? 'new' : 'unlinked');
+    const statusText = isLinked ? 'Linked' : (folder.push_status === 'will_create_new' ? 'Will Create New' : 'Needs Linking');
 
     const pendingFiles = folder.files.filter(f => f.link_status !== 'skipped');
     const skippedFiles = folder.files.filter(f => f.link_status === 'skipped');
@@ -3662,6 +3674,11 @@ async function renderReconciliationList() {
         </div>
         `}
 
+        ${isLinked ? `
+        <div class="reconciliation-actions">
+          <span style="color: #95bf47;">Linked${folder.shopify_title ? ` to "${escapeHtml(folder.shopify_title)}"` : ''}</span>
+        </div>
+        ` : `
         <div class="reconciliation-match-section">
           <label>Link to:</label>
           <select class="reconciliation-match-select" data-folder-path="${escapeHtml(folder.folder_path)}">
@@ -3677,6 +3694,7 @@ async function renderReconciliationList() {
           <button type="button" class="mark-new" data-action="mark-new">Create New</button>
           <button type="button" class="skip-folder" data-action="skip-folder" title="Skip all files in this folder">Skip Folder</button>
         </div>
+        `}
       </div>
     `;
   }).join('');
@@ -10472,6 +10490,35 @@ async function createServerMenuBar() {
   menuBar.id = 'server-menu-bar';
   menuBar.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; height: 30px; background-color: #2c2c2c; border-bottom: 1px solid #444; display: flex; align-items: center; padding: 0 10px; z-index: 10000; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 13px;';
   
+  // View menu - mirrors the desktop native menu's Filters Pane/Sidebar/
+  // Orders Pane toggles (see main.js createApplicationMenu), which a
+  // browser tab in server mode has no equivalent for otherwise: there is no
+  // native OS menu bar here at all, so without this there was no way to
+  // reopen a pane once closed.
+  const viewMenu = createMenuDropdown('View', [
+    { label: 'Filters Pane', action: () => {
+      if (window.PaneController?.toggle) {
+        window.PaneController.toggle('filters-pane');
+      } else {
+        window.electron.send('toggle-filters-pane');
+      }
+    }},
+    { label: 'Sidebar', action: () => {
+      if (window.PaneController?.toggle) {
+        window.PaneController.toggle('sidebar');
+      } else {
+        window.electron.send('toggle-sidebar');
+      }
+    }},
+    { label: 'Orders Pane', action: () => {
+      if (window.PaneController?.toggle) {
+        window.PaneController.toggle('orders-pane');
+      } else {
+        window.electron.send('toggle-orders-pane');
+      }
+    }}
+  ]);
+
   // Tools menu
   const toolsMenu = createMenuDropdown('Tools', [
     { label: 'Scan Directory', action: () => document.getElementById('scan-directory-button')?.click() },
@@ -10728,6 +10775,7 @@ async function createServerMenuBar() {
     }}
   ]);
   
+  menuBar.appendChild(viewMenu);
   menuBar.appendChild(toolsMenu);
   menuBar.appendChild(settingsMenu);
   menuBar.appendChild(helpMenu);
