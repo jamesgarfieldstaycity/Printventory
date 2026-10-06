@@ -1816,7 +1816,10 @@ async function runExtensionInboxImport(reason) {
     }
     if (result.imported > 0) {
       try {
-        if (typeof global.broadcastEvent === 'function') {
+        // Gated on isServerMode: desktop mode can also have the HTTP server up
+        // (MCP), and after it stops broadcastEvent is a no-op rather than null,
+        // so a bare typeof check would swallow the desktop path below.
+        if (isServerMode && typeof global.broadcastEvent === 'function') {
           global.broadcastEvent('refresh-grid');
         } else if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('refresh-grid');
