@@ -236,6 +236,11 @@ async function scanDirectory(directoryPath, maxFileSize, enableZipArchives = fal
   // having found nothing. path.resolve() normalizes to the real native form
   // (\\server\share\... on win32) with no effect on an already-native path.
   directoryPath = path.resolve(directoryPath);
+  // Posting is a no-op when there's no real parentPort (i.e. scanDirectory()
+  // was require()'d and called directly, such as from a unit test, rather
+  // than run inside an actual worker_threads Worker). Production behavior
+  // (always run as a Worker, parentPort always set) is unchanged.
+  const post = (msg) => { if (parentPort) parentPort.postMessage(msg); };
   const files = [];
   /** Every file-type dirent seen while walking the tree (matches legacy totalFiles meaning). */
   let traversedFileEntries = 0;
@@ -245,7 +250,7 @@ async function scanDirectory(directoryPath, maxFileSize, enableZipArchives = fal
   const flushDiscoveredFiles = (force = false) => {
     while (files.length >= SCAN_FLUSH_BATCH || (force && files.length > 0)) {
       const chunk = files.splice(0, Math.min(SCAN_FLUSH_BATCH, files.length));
-      parentPort.postMessage({ type: 'batch', files: chunk });
+      post({ type: 'batch', files: chunk });
     }
   };
 
@@ -263,7 +268,7 @@ async function scanDirectory(directoryPath, maxFileSize, enableZipArchives = fal
   const reportTraversedFile = () => {
     traversedFileEntries++;
     if (traversedFileEntries % TRAVERSE_PROGRESS_INTERVAL === 0) {
-      parentPort.postMessage({
+      post({
         type: 'progress',
         processed: traversedFileEntries
       });
@@ -285,7 +290,7 @@ async function scanDirectory(directoryPath, maxFileSize, enableZipArchives = fal
     // If no active ops and queue is empty, we are done
     if (activeOps === 0 && queue.length === 0) {
       if (traversedFileEntries > 0) {
-        parentPort.postMessage({
+        post({
           type: 'progress',
           processed: traversedFileEntries
         });
@@ -326,8 +331,36 @@ async function scanDirectory(directoryPath, maxFileSize, enableZipArchives = fal
       const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
       for (const entry of entries) {
         const fullPath = path.join(dirPath, entry.name);
+        let isDir = entry.isDirectory();
 
-        if (entry.isDirectory()) {
+        // entry.isDirectory() reads the Dirent's d_type bit from the
+        // readdir() response itself - fast (no extra syscall) but not
+        // always trustworthy. Over a UNC path onto a OneDrive-backed
+        // folder (cloud placeholder reparse points going through SMB),
+        // this has been observed coming back false for a real directory
+        // with no indication anything went wrong: no thrown error, just a
+        // wrong answer. That silently misroutes the entry into the file
+        // branch below, where (having no scan extension) it's dropped
+        // without comment - the entire subtree under it is never visited.
+        // This is the actual cause of "UNC folder scans but finds
+        // nothing": not a thrown error (nothing throws), a wrong type bit.
+        // A real stat() follows the reparse point and reports the true
+        // type, so when the fast path says "not a directory" AND the name
+        // doesn't look like a scannable file either (the case that would
+        // otherwise vanish silently), confirm with one stat() before
+        // giving up on it. Real files overwhelmingly have one of our
+        // scanned extensions and skip this extra call entirely.
+        if (!isDir && !shouldQueueFile(entry.name)) {
+          try {
+            const st = await fs.promises.stat(fullPath);
+            isDir = st.isDirectory();
+          } catch (_) {
+            // Genuinely gone or inaccessible - fall through and let it be
+            // counted/dropped as before.
+          }
+        }
+
+        if (isDir) {
           if (shouldSkipDirectoryName(entry.name, scanExcludeNames)) {
             continue;
           }
@@ -458,34 +491,45 @@ async function scanDirectory(directoryPath, maxFileSize, enableZipArchives = fal
   return files;
 }
 
-parentPort.on('message', async ({ directoryPath, maxFileSize, enableZipArchives, scanExtensions, excludeFolderNames, excludeDirectories, nodeModulesPath: passedNodeModulesPath }) => {
-  scanExcludeNames = normalizeExcludeNames(excludeFolderNames);
-  // Set the node_modules path if provided
-  if (passedNodeModulesPath) {
-    nodeModulesPath = passedNodeModulesPath;
-    console.log(`[Worker] Received node_modules path: ${nodeModulesPath}`);
-  }
-  
-  const extList = Array.from(buildScanExtensionSet(scanExtensions));
-  
-  // Load StreamZip only when ZIP archives are enabled (saves startup I/O on every scan).
-  if (enableZipArchives) {
-    try {
-      loadStreamZip();
-      if (!StreamZip) {
-        throw new Error('loadStreamZip() returned without setting StreamZip');
-      }
-    } catch (error) {
-      console.error(`[Worker] Error loading node-stream-zip:`, error);
-      console.error(`[Worker] Error stack:`, error.stack);
-      parentPort.postMessage({ type: 'error', error: `Failed to load node-stream-zip: ${error.message}` });
-      return;
+// Only register the worker message handler when actually running inside a
+// worker_threads Worker. When this file is require()'d directly (e.g. from a
+// unit test, to exercise scanDirectory()/processDirectory() in-process),
+// parentPort is null and this registration must be skipped - otherwise
+// parentPort.on(...) throws immediately on require().
+if (parentPort) {
+  parentPort.on('message', async ({ directoryPath, maxFileSize, enableZipArchives, scanExtensions, excludeFolderNames, excludeDirectories, nodeModulesPath: passedNodeModulesPath }) => {
+    scanExcludeNames = normalizeExcludeNames(excludeFolderNames);
+    // Set the node_modules path if provided
+    if (passedNodeModulesPath) {
+      nodeModulesPath = passedNodeModulesPath;
+      console.log(`[Worker] Received node_modules path: ${nodeModulesPath}`);
     }
-  }
-  try {
-    const result = await scanDirectory(directoryPath, maxFileSize, enableZipArchives, extList, excludeDirectories);
-    parentPort.postMessage({ type: 'done', result });
-  } catch (error) {
-    parentPort.postMessage({ type: 'error', error: error.message });
-  }
-});
+
+    const extList = Array.from(buildScanExtensionSet(scanExtensions));
+
+    // Load StreamZip only when ZIP archives are enabled (saves startup I/O on every scan).
+    if (enableZipArchives) {
+      try {
+        loadStreamZip();
+        if (!StreamZip) {
+          throw new Error('loadStreamZip() returned without setting StreamZip');
+        }
+      } catch (error) {
+        console.error(`[Worker] Error loading node-stream-zip:`, error);
+        console.error(`[Worker] Error stack:`, error.stack);
+        parentPort.postMessage({ type: 'error', error: `Failed to load node-stream-zip: ${error.message}` });
+        return;
+      }
+    }
+    try {
+      const result = await scanDirectory(directoryPath, maxFileSize, enableZipArchives, extList, excludeDirectories);
+      parentPort.postMessage({ type: 'done', result });
+    } catch (error) {
+      parentPort.postMessage({ type: 'error', error: error.message });
+    }
+  });
+}
+
+// Exported for direct require() in unit tests. Production usage (via
+// new Worker('scan-worker.js')) is unaffected - this is additive.
+module.exports = { scanDirectory };

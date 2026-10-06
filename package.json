@@ -39,6 +39,7 @@
     "test:slicer-protocol": "node slicer-protocol.test.js",
     "test:helper-bundle": "node helper/install-bundle.test.js",
     "test:scan-skip": "node scan-skip.test.js",
+    "test:scan-worker-dirent": "node scan-worker-dirent.test.js",
     "test:library-context": "node library-context.test.js",
     "test:stl-sanity": "node stl-sanity.test.js",
     "test:ai-rate-limit": "node ai-rate-limit.test.js",
