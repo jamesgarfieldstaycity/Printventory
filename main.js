@@ -13,6 +13,7 @@ const printEvents = require('./print-events');
 const printerManager = require('./printer-manager');
 const { buildFolderForest } = require('./folder-tree-lib');
 const { ensureShopifyTablesExist } = require('./core/schema');
+const shopifyCatalog = require('./core/shopify-catalog');
 const {
   registerMcpRoutes,
   buildMcpClientConfig,
@@ -6862,36 +6863,15 @@ ipcMain.handle('sync-spoolman-filaments', syncSpoolmanFilamentsHandler);
 /**
  * Read Shopify settings from database, with optional overrides.
  */
-function readShopifySettings(overrides = {}) {
-  const domainRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('shopifyStoreDomain');
-  const clientIdRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('shopifyClientId');
-  const clientSecretRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('shopifyClientSecret');
-  const versionRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('shopifyApiVersion');
-  return {
-    storeDomain: (overrides.storeDomain ?? domainRow?.value ?? '').trim(),
-    clientId: (overrides.clientId ?? clientIdRow?.value ?? '').trim(),
-    clientSecret: (overrides.clientSecret ?? clientSecretRow?.value ?? '').trim(),
-    apiVersion: overrides.apiVersion ?? (versionRow?.value || '2024-10')
-  };
+function readShopifySettings(overrides) { // TRANSITIONAL shim: removed once the last caller has moved to core
+  return shopifyCatalog.readShopifySettings(db, overrides);
 }
 
 /**
  * Get all Shopify settings (without exposing the client secret).
  */
 async function getShopifySettingsHandler(event) {
-  try {
-    const settings = readShopifySettings();
-    return {
-      storeDomain: settings.storeDomain,
-      clientId: settings.clientId,
-      clientSecret: settings.clientSecret ? '********' : '', // Mask the secret
-      apiVersion: settings.apiVersion,
-      hasCredentials: !!(settings.clientId && settings.clientSecret)
-    };
-  } catch (error) {
-    console.error('Error getting Shopify settings:', error);
-    throw error;
-  }
+  return shopifyCatalog.getShopifySettings(db);
 }
 ipcMain.handle('get-shopify-settings', getShopifySettingsHandler);
 ipcHandlerRegistry.set('get-shopify-settings', getShopifySettingsHandler);
@@ -6900,39 +6880,7 @@ ipcHandlerRegistry.set('get-shopify-settings', getShopifySettingsHandler);
  * Save Shopify settings.
  */
 async function saveShopifySettingsHandler(event, settings) {
-  try {
-    const { storeDomain, clientId, clientSecret, apiVersion } = settings;
-
-    if (storeDomain !== undefined) {
-      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
-        .run('shopifyStoreDomain', String(storeDomain || '').trim());
-    }
-    if (clientId !== undefined) {
-      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
-        .run('shopifyClientId', String(clientId || '').trim());
-    }
-    // Only update client secret if a new value is provided (not the masked value)
-    if (clientSecret !== undefined && clientSecret !== '********') {
-      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
-        .run('shopifyClientSecret', String(clientSecret || '').trim());
-    }
-    if (apiVersion !== undefined) {
-      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
-        .run('shopifyApiVersion', String(apiVersion || '2024-10').trim());
-    }
-
-    // Clear the token cache when credentials change
-    const domain = storeDomain || db.prepare('SELECT value FROM settings WHERE key = ?').get('shopifyStoreDomain')?.value || '';
-    const id = clientId || db.prepare('SELECT value FROM settings WHERE key = ?').get('shopifyClientId')?.value || '';
-    if (domain && id) {
-      shopifyApi.clearTokenCache(domain, id);
-    }
-
-    return { success: true };
-  } catch (error) {
-    console.error('Error saving Shopify settings:', error);
-    throw error;
-  }
+  return shopifyCatalog.saveShopifySettings(db, settings);
 }
 ipcMain.handle('save-shopify-settings', saveShopifySettingsHandler);
 ipcHandlerRegistry.set('save-shopify-settings', saveShopifySettingsHandler);
@@ -6941,45 +6889,7 @@ ipcHandlerRegistry.set('save-shopify-settings', saveShopifySettingsHandler);
  * Test Shopify API connection using Client Credentials Grant.
  */
 async function testShopifyConnectionHandler(event, storeDomain, clientId, clientSecret) {
-  try {
-    // Use provided values or fall back to stored settings
-    const settings = readShopifySettings({ storeDomain, clientId, clientSecret });
-
-    if (!settings.storeDomain) {
-      throw new Error('Store domain is required (must be *.myshopify.com domain)');
-    }
-    if (!settings.clientId) {
-      throw new Error('Client ID is required');
-    }
-    if (!settings.clientSecret) {
-      throw new Error('Client Secret is required');
-    }
-
-    // Validate the domain format
-    if (!settings.storeDomain.endsWith('.myshopify.com')) {
-      throw new Error(`Store domain must be a *.myshopify.com domain, got: ${settings.storeDomain}`);
-    }
-
-    console.log('[Shopify Test] Testing connection with Client Credentials Grant...');
-    console.log('[Shopify Test] Store domain:', settings.storeDomain);
-    console.log('[Shopify Test] Client ID:', settings.clientId);
-
-    // Use the shopify.js module which handles Client Credentials Grant
-    const result = await shopifyApi.testConnection(
-      settings.storeDomain,
-      settings.clientId,
-      settings.clientSecret
-    );
-
-    return {
-      success: true,
-      shopName: result.shopName,
-      currency: result.currency
-    };
-  } catch (error) {
-    console.error('Error testing Shopify connection:', error);
-    throw error;
-  }
+  return shopifyCatalog.testShopifyConnection(db, storeDomain, clientId, clientSecret);
 }
 ipcMain.handle('test-shopify-connection', testShopifyConnectionHandler);
 ipcHandlerRegistry.set('test-shopify-connection', testShopifyConnectionHandler);
@@ -6992,13 +6902,7 @@ ipcHandlerRegistry.set('test-shopify-connection', testShopifyConnectionHandler);
  * Get all product types.
  */
 async function getShopifyProductTypesHandler(event) {
-  try {
-    const types = db.prepare('SELECT id, code, name, created_at FROM shopify_product_types ORDER BY name').all();
-    return types;
-  } catch (error) {
-    console.error('Error getting Shopify product types:', error);
-    throw error;
-  }
+  return shopifyCatalog.getShopifyProductTypes(db);
 }
 ipcMain.handle('get-shopify-product-types', getShopifyProductTypesHandler);
 ipcHandlerRegistry.set('get-shopify-product-types', getShopifyProductTypesHandler);
@@ -7007,30 +6911,7 @@ ipcHandlerRegistry.set('get-shopify-product-types', getShopifyProductTypesHandle
  * Save (create or update) a product type.
  */
 async function saveShopifyProductTypeHandler(event, productType) {
-  try {
-    const { id, code, name } = productType;
-    const codeUpper = (code || '').toUpperCase().trim();
-    const nameTrimmed = (name || '').trim();
-
-    if (!codeUpper || !nameTrimmed) {
-      throw new Error('Code and name are required');
-    }
-
-    if (id) {
-      // Update existing
-      db.prepare('UPDATE shopify_product_types SET code = ?, name = ? WHERE id = ?')
-        .run(codeUpper, nameTrimmed, id);
-      return { id, code: codeUpper, name: nameTrimmed };
-    } else {
-      // Create new
-      const result = db.prepare('INSERT INTO shopify_product_types (code, name) VALUES (?, ?)')
-        .run(codeUpper, nameTrimmed);
-      return { id: result.lastInsertRowid, code: codeUpper, name: nameTrimmed };
-    }
-  } catch (error) {
-    console.error('Error saving Shopify product type:', error);
-    throw error;
-  }
+  return shopifyCatalog.saveShopifyProductType(db, productType);
 }
 ipcMain.handle('save-shopify-product-type', saveShopifyProductTypeHandler);
 ipcHandlerRegistry.set('save-shopify-product-type', saveShopifyProductTypeHandler);
@@ -7039,19 +6920,7 @@ ipcHandlerRegistry.set('save-shopify-product-type', saveShopifyProductTypeHandle
  * Delete a product type (if not in use).
  */
 async function deleteShopifyProductTypeHandler(event, typeId) {
-  try {
-    // Check if in use
-    const inUse = db.prepare('SELECT COUNT(*) as count FROM shopify_products WHERE type_code = (SELECT code FROM shopify_product_types WHERE id = ?)')
-      .get(typeId);
-    if (inUse && inUse.count > 0) {
-      throw new Error('Cannot delete product type that is in use');
-    }
-    db.prepare('DELETE FROM shopify_product_types WHERE id = ?').run(typeId);
-    return { success: true };
-  } catch (error) {
-    console.error('Error deleting Shopify product type:', error);
-    throw error;
-  }
+  return shopifyCatalog.deleteShopifyProductType(db, typeId);
 }
 ipcMain.handle('delete-shopify-product-type', deleteShopifyProductTypeHandler);
 ipcHandlerRegistry.set('delete-shopify-product-type', deleteShopifyProductTypeHandler);
@@ -7064,13 +6933,7 @@ ipcHandlerRegistry.set('delete-shopify-product-type', deleteShopifyProductTypeHa
  * Get all collection codes.
  */
 async function getShopifyCollectionCodesHandler(event) {
-  try {
-    const codes = db.prepare('SELECT id, code, name, created_at FROM shopify_collection_codes ORDER BY name').all();
-    return codes;
-  } catch (error) {
-    console.error('Error getting Shopify collection codes:', error);
-    throw error;
-  }
+  return shopifyCatalog.getShopifyCollectionCodes(db);
 }
 ipcMain.handle('get-shopify-collection-codes', getShopifyCollectionCodesHandler);
 ipcHandlerRegistry.set('get-shopify-collection-codes', getShopifyCollectionCodesHandler);
@@ -7080,32 +6943,7 @@ ipcHandlerRegistry.set('get-shopify-collection-codes', getShopifyCollectionCodes
  * Returns a suggested 3-letter code and validates uniqueness.
  */
 async function suggestShopifyCollectionCodeHandler(event, folderName) {
-  try {
-    const name = (folderName || '').trim();
-    if (!name) {
-      return { suggestedCode: '', isUnique: false };
-    }
-
-    // Generate a 3-letter code from the folder name
-    // First try first 3 letters
-    let suggestedCode = name.substring(0, 3).toUpperCase().replace(/[^A-Z]/g, '');
-
-    // If we don't have 3 letters, try to extract consonants or pad with X
-    if (suggestedCode.length < 3) {
-      const consonants = name.toUpperCase().replace(/[^BCDFGHJKLMNPQRSTVWXYZ]/g, '');
-      const vowels = name.toUpperCase().replace(/[^AEIOU]/g, '');
-      suggestedCode = (consonants + vowels + 'XXX').substring(0, 3);
-    }
-
-    // Check if this code is unique
-    const existing = db.prepare('SELECT code FROM shopify_collection_codes WHERE code = ?').get(suggestedCode);
-    const isUnique = !existing;
-
-    return { suggestedCode, isUnique, name };
-  } catch (error) {
-    console.error('Error suggesting collection code:', error);
-    throw error;
-  }
+  return shopifyCatalog.suggestShopifyCollectionCode(db, folderName);
 }
 ipcMain.handle('suggest-shopify-collection-code', suggestShopifyCollectionCodeHandler);
 ipcHandlerRegistry.set('suggest-shopify-collection-code', suggestShopifyCollectionCodeHandler);
@@ -7114,30 +6952,7 @@ ipcHandlerRegistry.set('suggest-shopify-collection-code', suggestShopifyCollecti
  * Save (create or update) a collection code.
  */
 async function saveShopifyCollectionCodeHandler(event, collectionCode) {
-  try {
-    const { id, code, name } = collectionCode;
-    const codeUpper = (code || '').toUpperCase().trim();
-    const nameTrimmed = (name || '').trim();
-
-    if (!codeUpper || !nameTrimmed) {
-      throw new Error('Code and name are required');
-    }
-
-    if (id) {
-      // Update existing
-      db.prepare('UPDATE shopify_collection_codes SET code = ?, name = ? WHERE id = ?')
-        .run(codeUpper, nameTrimmed, id);
-      return { id, code: codeUpper, name: nameTrimmed };
-    } else {
-      // Create new
-      const result = db.prepare('INSERT INTO shopify_collection_codes (code, name) VALUES (?, ?)')
-        .run(codeUpper, nameTrimmed);
-      return { id: result.lastInsertRowid, code: codeUpper, name: nameTrimmed };
-    }
-  } catch (error) {
-    console.error('Error saving Shopify collection code:', error);
-    throw error;
-  }
+  return shopifyCatalog.saveShopifyCollectionCode(db, collectionCode);
 }
 ipcMain.handle('save-shopify-collection-code', saveShopifyCollectionCodeHandler);
 ipcHandlerRegistry.set('save-shopify-collection-code', saveShopifyCollectionCodeHandler);
@@ -7146,19 +6961,7 @@ ipcHandlerRegistry.set('save-shopify-collection-code', saveShopifyCollectionCode
  * Delete a collection code (if not in use).
  */
 async function deleteShopifyCollectionCodeHandler(event, codeId) {
-  try {
-    // Check if in use
-    const inUse = db.prepare('SELECT COUNT(*) as count FROM shopify_products WHERE collection_code = (SELECT code FROM shopify_collection_codes WHERE id = ?)')
-      .get(codeId);
-    if (inUse && inUse.count > 0) {
-      throw new Error('Cannot delete collection code that is in use');
-    }
-    db.prepare('DELETE FROM shopify_collection_codes WHERE id = ?').run(codeId);
-    return { success: true };
-  } catch (error) {
-    console.error('Error deleting Shopify collection code:', error);
-    throw error;
-  }
+  return shopifyCatalog.deleteShopifyCollectionCode(db, codeId);
 }
 ipcMain.handle('delete-shopify-collection-code', deleteShopifyCollectionCodeHandler);
 ipcHandlerRegistry.set('delete-shopify-collection-code', deleteShopifyCollectionCodeHandler);
