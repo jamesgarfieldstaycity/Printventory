@@ -959,6 +959,235 @@ async function readImageAsBase64(db, imagePath) {
   }
 }
 
+/**
+ * Push a product to Shopify as a Draft.
+ */
+async function pushToShopify(db, productId) {
+  try {
+    // Get product from database
+    const product = db.prepare(`
+      SELECT * FROM shopify_products WHERE id = ?
+    `).get(productId);
+
+    if (!product) {
+      throw new Error('Product not found');
+    }
+
+    // Get Shopify settings
+    const settings = readShopifySettings(db, db);
+    if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
+      throw new Error('Shopify credentials not configured. Please configure them in Tools → Shopify.');
+    }
+
+    // Get tags for the product (if linked to a model)
+    let tags = [];
+    if (product.model_id) {
+      const tagRows = db.prepare(`
+        SELECT t.name FROM tags t
+        JOIN model_tags mt ON t.id = mt.tag_id
+        WHERE mt.model_id = ?
+      `).all(product.model_id);
+      tags = tagRows.map(r => r.name);
+    }
+
+    // Get variants for this product
+    const variants = db.prepare(`
+      SELECT * FROM shopify_variants WHERE product_id = ? ORDER BY variant_number
+    `).all(productId);
+
+    const productData = {
+      title: product.title,
+      description: product.description,
+      licensor_collection: product.licensor_collection,
+      tags: tags
+    };
+
+    let shopifyProductId = product.shopify_product_id;
+    const isUpdate = !!shopifyProductId;
+
+    if (shopifyProductId) {
+      // Update existing product
+      console.log('[Shopify] Updating existing product:', shopifyProductId);
+      await shopifyApi.updateProduct(
+        settings.storeDomain,
+        settings.clientId,
+        settings.clientSecret,
+        shopifyProductId,
+        productData
+      );
+
+      // Update all variants that have a Shopify variant ID (using bulk update API)
+      const variantsToUpdate = variants
+        .filter(v => v.shopify_variant_id)
+        .map(v => ({
+          id: v.shopify_variant_id,
+          price: v.price,
+          sku: v.sku
+        }));
+
+      if (variantsToUpdate.length > 0) {
+        await shopifyApi.updateVariantsBulk(
+          settings.storeDomain,
+          settings.clientId,
+          settings.clientSecret,
+          shopifyProductId,
+          variantsToUpdate
+        );
+      }
+    } else {
+      // Create new product as draft
+      console.log('[Shopify] Creating new product as draft');
+      const result = await shopifyApi.createProductDraft(
+        settings.storeDomain,
+        settings.clientId,
+        settings.clientSecret,
+        productData
+      );
+
+      shopifyProductId = result.productId;
+
+      // If we have variants, update the default variant with first variant's data
+      if (result.variantId && variants.length > 0) {
+        const firstVariant = variants[0];
+        await shopifyApi.updateVariantsBulk(
+          settings.storeDomain,
+          settings.clientId,
+          settings.clientSecret,
+          shopifyProductId,
+          [{
+            id: result.variantId,
+            price: firstVariant.price,
+            sku: firstVariant.sku
+          }]
+        );
+
+        // Store the Shopify variant ID
+        db.prepare(`
+          UPDATE shopify_variants SET shopify_variant_id = ?, updated_at = datetime('now')
+          WHERE id = ?
+        `).run(result.variantId, firstVariant.id);
+      }
+
+      // TODO: For products with multiple variants, we'd need to create additional variants via API
+      // This is a more complex operation that would require additional Shopify mutations
+    }
+
+    // Update local database with Shopify product ID and status
+    db.prepare(`
+      UPDATE shopify_products SET
+        shopify_product_id = ?,
+        push_status = 'draft',
+        last_pushed_at = datetime('now'),
+        last_push_error = NULL,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `).run(shopifyProductId, productId);
+
+    return {
+      success: true,
+      shopifyProductId,
+      variantCount: variants.length,
+      message: isUpdate ? 'Product updated in Shopify' : 'Product created as Draft in Shopify'
+    };
+  } catch (error) {
+    console.error('Error pushing to Shopify:', error);
+
+    // Store the error in the database
+    db.prepare(`
+      UPDATE shopify_products SET
+        last_push_error = ?,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `).run(error.message || String(error), productId);
+
+    throw error;
+  }
+}
+
+/**
+ * Fetch all products from Shopify for reconciliation.
+ */
+async function fetchShopifyProducts(db) {
+  try {
+    const settings = readShopifySettings(db, db);
+    if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
+      throw new Error('Shopify credentials not configured');
+    }
+
+    const products = await shopifyApi.fetchAllProducts(
+      settings.storeDomain,
+      settings.clientId,
+      settings.clientSecret,
+      500 // Fetch up to 500 products
+    );
+
+    return products;
+  } catch (error) {
+    console.error('Error fetching Shopify products:', error);
+    throw error;
+  }
+}
+
+/**
+ * TEMPORARY diagnostic handler - not wired into any UI.
+ * Compares a full (uncapped-ish) product list fetch against a direct by-ID
+ * lookup for a specific product GID, to figure out whether a "missing"
+ * product is a pagination/sort issue in fetchAllProducts, or something the
+ * Admin API won't return via the list endpoint at all for this app's scope.
+ * Safe to delete once the Wyrm's Perch / Widow's Garland mystery is solved.
+ */
+async function debugShopifyDiagnostics(db, { productGid, titleMatch } = {}) {
+  const settings = readShopifySettings(db, db);
+  if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
+    return { error: 'Shopify credentials not configured' };
+  }
+
+  const result = { totalFetched: null, matchesInList: [], directLookup: null, directLookupError: null };
+
+  try {
+    const products = await shopifyApi.fetchAllProducts(
+      settings.storeDomain, settings.clientId, settings.clientSecret, 1000
+    );
+    result.totalFetched = products.length;
+    if (titleMatch) {
+      const re = new RegExp(titleMatch, 'i');
+      result.matchesInList = products.filter(p => re.test(p.title || ''));
+    }
+  } catch (error) {
+    result.listError = error.message || String(error);
+  }
+
+  if (productGid) {
+    try {
+      const product = await shopifyApi.fetchProductWithVariants(
+        settings.storeDomain, settings.clientId, settings.clientSecret, productGid
+      );
+      result.directLookup = { id: product.id, title: product.title, status: product.status };
+    } catch (error) {
+      result.directLookupError = error.message || String(error);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Get Shopify product IDs that are already linked to local products.
+ * Used to filter the reconciliation dropdown.
+ */
+async function getLinkedShopifyProductIds(db) {
+  try {
+    const rows = db.prepare(`
+      SELECT DISTINCT shopify_product_id FROM shopify_products
+      WHERE shopify_product_id IS NOT NULL AND shopify_product_id != ''
+    `).all();
+    return rows.map(r => r.shopify_product_id);
+  } catch (error) {
+    console.error('Error getting linked Shopify product IDs:', error);
+    return [];
+  }
+}
+
 module.exports = {
   readShopifySettings,
   getShopifySettings,
@@ -990,5 +1219,9 @@ module.exports = {
   allocateSeriesNumber,
   generateProductCode,
   getProductFolderImages,
-  readImageAsBase64
+  readImageAsBase64,
+  pushToShopify,
+  fetchShopifyProducts,
+  debugShopifyDiagnostics,
+  getLinkedShopifyProductIds
 };
