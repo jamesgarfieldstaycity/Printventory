@@ -42,7 +42,7 @@ function readShopifySettings(db, overrides = {}) {
  */
 async function getShopifySettings(db) {
   try {
-    const settings = readShopifySettings(db, db);
+    const settings = readShopifySettings(db);
     return {
       storeDomain: settings.storeDomain,
       clientId: settings.clientId,
@@ -404,7 +404,7 @@ async function fetchLiveShopifyData(db, localProductId) {
       throw new Error('Product is not linked to Shopify');
     }
 
-    const settings = readShopifySettings(db, db);
+    const settings = readShopifySettings(db);
     if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
       throw new Error('Shopify credentials not configured');
     }
@@ -477,7 +477,7 @@ async function updateLinkedShopifyProduct(db, localProductId, updates) {
       throw new Error('Product is not linked to Shopify');
     }
 
-    const settings = readShopifySettings(db, db);
+    const settings = readShopifySettings(db);
     if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
       throw new Error('Shopify credentials not configured');
     }
@@ -541,7 +541,7 @@ async function updateLinkedShopifyProduct(db, localProductId, updates) {
  */
 async function deleteShopifyProductMedia(db, shopifyProductId, mediaIds) {
   try {
-    const settings = readShopifySettings(db, db);
+    const settings = readShopifySettings(db);
     if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
       throw new Error('Shopify credentials not configured');
     }
@@ -567,7 +567,7 @@ async function deleteShopifyProductMedia(db, shopifyProductId, mediaIds) {
  */
 async function uploadShopifyProductImages(db, shopifyProductId, images) {
   try {
-    const settings = readShopifySettings(db, db);
+    const settings = readShopifySettings(db);
     if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
       throw new Error('Shopify credentials not configured');
     }
@@ -616,7 +616,7 @@ async function uploadShopifyProductImages(db, shopifyProductId, images) {
  */
 async function reorderShopifyProductMedia(db, shopifyProductId, moves) {
   try {
-    const settings = readShopifySettings(db, db);
+    const settings = readShopifySettings(db);
     if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
       throw new Error('Shopify credentials not configured');
     }
@@ -974,7 +974,7 @@ async function pushToShopify(db, productId) {
     }
 
     // Get Shopify settings
-    const settings = readShopifySettings(db, db);
+    const settings = readShopifySettings(db);
     if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
       throw new Error('Shopify credentials not configured. Please configure them in Tools → Shopify.');
     }
@@ -1109,7 +1109,7 @@ async function pushToShopify(db, productId) {
  */
 async function fetchShopifyProducts(db) {
   try {
-    const settings = readShopifySettings(db, db);
+    const settings = readShopifySettings(db);
     if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
       throw new Error('Shopify credentials not configured');
     }
@@ -1137,7 +1137,7 @@ async function fetchShopifyProducts(db) {
  * Safe to delete once the Wyrm's Perch / Widow's Garland mystery is solved.
  */
 async function debugShopifyDiagnostics(db, { productGid, titleMatch } = {}) {
-  const settings = readShopifySettings(db, db);
+  const settings = readShopifySettings(db);
   if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
     return { error: 'Shopify credentials not configured' };
   }

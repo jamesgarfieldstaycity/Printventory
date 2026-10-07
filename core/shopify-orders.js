@@ -180,7 +180,7 @@ function pickHistoricalShipment(order) {
  * fulfillment push.
  */
 async function syncShopifyOrders(db, notify, options = {}) {
-  const settings = readShopifySettings(db, db);
+  const settings = readShopifySettings(db);
   if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
     return { error: 'Shopify credentials not configured', ordersSynced: 0 };
   }
@@ -519,7 +519,7 @@ async function shipShopifyOrder(db, notify, { orderId, carrier, trackingNumber, 
     if (order.local_status === 'shipped') return { error: 'This order is already marked shipped' };
     if (!trackingNumber) return { error: 'Enter a tracking number first' };
 
-    const settings = readShopifySettings(db, db);
+    const settings = readShopifySettings(db);
     if (!settings.storeDomain || !settings.clientId || !settings.clientSecret) {
       return { error: 'Shopify credentials not configured' };
     }
