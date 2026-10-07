@@ -15843,9 +15843,36 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
 
       removeButton?.addEventListener('click', async () => {
-        if (confirm('Remove this folder from your library? Models already imported will remain.')) {
-          await window.electron.removeLibraryFolder(folderId);
+        // Removal now deletes the scanned models too, so show the real count before asking.
+        let count;
+        try {
+          ({ count } = await window.electron.countModelsUnderLibraryFolder(folderId));
+        } catch (error) {
+          alert('Could not check this folder before removing it: ' + (error.message || error));
+          return;
+        }
+
+        const message = count === 0
+          ? 'Remove this folder from your library? No scanned models are associated with it.'
+          : `Remove this folder from your library? This will also permanently delete ${count} scanned model${count === 1 ? '' : 's'} that ${count === 1 ? 'was' : 'were'} imported from it, including any file associations, variant links, or Shopify links tied only to those models. This cannot be undone.`;
+        if (!confirm(message)) return;
+
+        try {
+          const result = await window.electron.removeLibraryFolder(folderId);
+          const deleted = result?.deletedModelCount ?? 0;
           await renderLibraryFoldersList();
+          if (deleted > 0 && typeof window.forceGridRefresh === 'function') {
+            await window.forceGridRefresh();
+          }
+          // Report what actually happened; it can differ from the pre-count if the library changed meanwhile.
+          await window.electron.showMessage(
+            'Folder removed',
+            deleted === 0
+              ? 'The folder was removed. No scanned models were deleted.'
+              : `The folder was removed and ${deleted} scanned model${deleted === 1 ? ' was' : 's were'} permanently deleted.`
+          );
+        } catch (error) {
+          alert('Failed to remove folder: ' + (error.message || error));
         }
       });
     });
