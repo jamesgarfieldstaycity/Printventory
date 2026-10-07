@@ -4607,24 +4607,42 @@ ipcMain.handle('count-models-under-library-folder', async (event, id) => {
   }
 });
 
+// Removes the folder AND permanently deletes the models scanned from it (boundary-safe path match), all in one
+// transaction. Tables whose model_id FK has ON DELETE CASCADE/SET NULL (shopify_product_files,
+// shopify_variant_file_links, shopify_products, shopify_order_line_items) are handled by SQLite.
+// model_tags, model_filaments and print_events declare the FK with no ON DELETE action, so
+// deleteModelJunctionRows (the same helper every other model-delete path uses) must clear them first.
 ipcMain.handle('remove-library-folder', async (event, id) => {
   try {
-    db.prepare('DELETE FROM library_folders WHERE id = ?').run(id);
+    let deletedModelCount = 0;
+    db.transaction(() => {
+      const folder = db.prepare('SELECT path FROM library_folders WHERE id = ?').get(id);
+      if (folder) {
+        const models = findModelsUnderLibraryFolderPath(folder.path);
+        const deleteModel = db.prepare('DELETE FROM models WHERE id = ?');
+        for (const model of models) {
+          deleteModelJunctionRows(model.id);
+          deletedModelCount += deleteModel.run(model.id).changes;
+        }
+      }
 
-    // Update legacy directoryPath to first remaining folder
-    const firstFolder = db.prepare('SELECT path FROM library_folders ORDER BY created_at ASC LIMIT 1').get();
-    if (firstFolder) {
-      db.prepare(`
-        INSERT INTO settings (key, value)
-        VALUES ('directoryPath', ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value
-      `).run(firstFolder.path);
-    } else {
-      // No folders left, clear the legacy setting
-      db.prepare('DELETE FROM settings WHERE key = ?').run('directoryPath');
-    }
+      db.prepare('DELETE FROM library_folders WHERE id = ?').run(id);
 
-    return true;
+      // Update legacy directoryPath to first remaining folder
+      const firstFolder = db.prepare('SELECT path FROM library_folders ORDER BY created_at ASC LIMIT 1').get();
+      if (firstFolder) {
+        db.prepare(`
+          INSERT INTO settings (key, value)
+          VALUES ('directoryPath', ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        `).run(firstFolder.path);
+      } else {
+        // No folders left, clear the legacy setting
+        db.prepare('DELETE FROM settings WHERE key = ?').run('directoryPath');
+      }
+    })();
+
+    return { removedFolderId: id, deletedModelCount };
   } catch (error) {
     console.error('Error removing library folder:', error);
     throw error;
