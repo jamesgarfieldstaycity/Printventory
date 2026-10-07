@@ -495,6 +495,7 @@
     'getLibraryFolders': 'get-library-folders',
     'addLibraryFolder': 'add-library-folder',
     'updateLibraryFolder': 'update-library-folder',
+    'countModelsUnderLibraryFolder': 'count-models-under-library-folder',
     'removeLibraryFolder': 'remove-library-folder',
     'updateLibraryFolderScanTime': 'update-library-folder-scan-time',
     'scanDirectory': 'scan-directory',

@@ -72,6 +72,7 @@ contextBridge.exposeInMainWorld('electron', {
   getLibraryFolders: () => ipcRenderer.invoke('get-library-folders'),
   addLibraryFolder: (path) => ipcRenderer.invoke('add-library-folder', path),
   updateLibraryFolder: (data) => ipcRenderer.invoke('update-library-folder', data),
+  countModelsUnderLibraryFolder: (id) => ipcRenderer.invoke('count-models-under-library-folder', id),
   removeLibraryFolder: (id) => ipcRenderer.invoke('remove-library-folder', id),
   updateLibraryFolderScanTime: (id) => ipcRenderer.invoke('update-library-folder-scan-time', id),
   scanDirectory: (directoryPath, options) => ipcRenderer.invoke('scan-directory', directoryPath, options || {}),
