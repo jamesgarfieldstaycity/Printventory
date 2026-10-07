@@ -4593,6 +4593,20 @@ ipcMain.handle('update-library-folder', async (event, { id, enabled, auto_scan }
   }
 });
 
+// Read-only: how many models rows remove-library-folder would delete for this folder.
+ipcMain.handle('count-models-under-library-folder', async (event, id) => {
+  try {
+    const folder = db.prepare('SELECT path FROM library_folders WHERE id = ?').get(id);
+    if (!folder) {
+      throw new Error('Library folder not found');
+    }
+    return { path: folder.path, count: findModelsUnderLibraryFolderPath(folder.path).length };
+  } catch (error) {
+    console.error('Error counting models under library folder:', error);
+    throw error;
+  }
+});
+
 ipcMain.handle('remove-library-folder', async (event, id) => {
   try {
     db.prepare('DELETE FROM library_folders WHERE id = ?').run(id);
@@ -4739,6 +4753,22 @@ function normalizePath(filepath) {
 // scan roots are normalized with forward slashes; naive LIKE would fail to pair them.
 function directoryScanPrefixSqlParam(scanDirectoryPath) {
   return normalizePath(scanDirectoryPath).replace(/\/$/, '').toLowerCase() + '%';
+}
+
+// Boundary-safe variant of the prefix match above, for DESTRUCTIVE callers only.
+// directoryScanPrefixSqlParam('C:/a') -> 'c:/a%' also matches the sibling 'C:/ab/x.stl'. Here the SQL LIKE only
+// narrows candidates; the JS filter then requires the path to equal the root or continue with a '/' separator
+// (zip entries 'root/x.zip::entry' satisfy this because the '/' precedes the archive name).
+function findModelsUnderLibraryFolderPath(folderPath) {
+  const root = normalizePath(folderPath).replace(/\/+$/, '').toLowerCase();
+  const candidates = db.prepare(`
+    SELECT id, filePath FROM models
+    WHERE REPLACE(LOWER(filePath), CHAR(92), '/') LIKE ?
+  `).all(directoryScanPrefixSqlParam(folderPath));
+  return candidates.filter((m) => {
+    const p = normalizePath(m.filePath || '').toLowerCase();
+    return p === root || p.startsWith(root + '/');
+  });
 }
 
 // Apply path-based metadata for STL Home scan: segments from root (From Root) or from model up (From Model).
