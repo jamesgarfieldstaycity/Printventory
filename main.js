@@ -7194,7 +7194,13 @@ ipcHandlerRegistry.set('generate-product-code', generateProductCodeHandler);
  * Get images from a folder.
  */
 async function getProductFolderImagesHandler(event, folderPath) {
-  return shopifyCatalog.getProductFolderImages(db, folderPath);
+  // isServerMode: the WebSocket bridge exposes this handler to network
+  // clients with a caller-supplied path and no native file dialog in front of
+  // it, so require the path be under a registered library folder there. In
+  // desktop/IPC mode the user already has direct disk access, so any
+  // existing path (e.g. one picked via the native Browse dialog, which can
+  // be outside every library folder) is still allowed.
+  return shopifyCatalog.getProductFolderImages(db, folderPath, isServerMode);
 }
 ipcMain.handle('get-product-folder-images', getProductFolderImagesHandler);
 ipcHandlerRegistry.set('get-product-folder-images', getProductFolderImagesHandler);
@@ -7203,7 +7209,9 @@ ipcHandlerRegistry.set('get-product-folder-images', getProductFolderImagesHandle
  * Read an image as base64.
  */
 async function readImageAsBase64Handler(event, imagePath) {
-  return shopifyCatalog.readImageAsBase64(db, imagePath);
+  // See getProductFolderImagesHandler above for why enforcement is gated on
+  // isServerMode rather than applied unconditionally.
+  return shopifyCatalog.readImageAsBase64(db, imagePath, isServerMode);
 }
 ipcMain.handle('read-image-as-base64', readImageAsBase64Handler);
 ipcHandlerRegistry.set('read-image-as-base64', readImageAsBase64Handler);

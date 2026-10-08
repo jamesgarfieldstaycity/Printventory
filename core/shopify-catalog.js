@@ -897,11 +897,49 @@ async function generateProductCode(db, productName) {
 }
 
 /**
+ * Normalize backslashes to forward slashes for cross-platform path comparison.
+ */
+function normalizeFsPath(filepath) {
+  return filepath.replace(/\\/g, '/');
+}
+
+/**
+ * Boundary-safe check: does targetPath resolve to a location inside one of the
+ * registered library folders? Mirrors findModelsUnderLibraryFolderPath's
+ * matcher in main.js (root-or-root-plus-separator, never a bare prefix, so
+ * 'C:/a' does not also match the sibling 'C:/ab').
+ *
+ * Desktop/IPC callers are trusted (the user owns the machine and can pick any
+ * file via the native dialog already), so callers pass enforce=false there.
+ * In --server mode the equivalent calls are reachable over the network via
+ * the WebSocket bridge with a client-supplied path and no native dialog in
+ * front of them, so callers pass enforce=true there to require the path be
+ * under a folder the user explicitly registered to scan.
+ */
+function isPathWithinLibraryFolders(db, targetPath) {
+  try {
+    const resolvedTarget = normalizeFsPath(path.resolve(targetPath)).toLowerCase();
+    const folders = db.prepare('SELECT path FROM library_folders').all();
+    return folders.some(({ path: folderPath }) => {
+      if (!folderPath) return false;
+      const resolvedRoot = normalizeFsPath(path.resolve(folderPath)).replace(/\/+$/, '').toLowerCase();
+      return resolvedTarget === resolvedRoot || resolvedTarget.startsWith(resolvedRoot + '/');
+    });
+  } catch (error) {
+    return false;
+  }
+}
+
+/**
  * Get images from a folder.
  */
-async function getProductFolderImages(db, folderPath) {
+async function getProductFolderImages(db, folderPath, enforce = false) {
   try {
     if (!folderPath || !fs.existsSync(folderPath)) {
+      return [];
+    }
+    if (enforce && !isPathWithinLibraryFolders(db, folderPath)) {
+      console.error('Rejected getProductFolderImages: path outside registered library folders:', folderPath);
       return [];
     }
 
@@ -935,9 +973,13 @@ async function getProductFolderImages(db, folderPath) {
 /**
  * Read an image as base64.
  */
-async function readImageAsBase64(db, imagePath) {
+async function readImageAsBase64(db, imagePath, enforce = false) {
   try {
     if (!imagePath || !fs.existsSync(imagePath)) {
+      return null;
+    }
+    if (enforce && !isPathWithinLibraryFolders(db, imagePath)) {
+      console.error('Rejected readImageAsBase64: path outside registered library folders:', imagePath);
       return null;
     }
 
@@ -1220,6 +1262,7 @@ module.exports = {
   generateProductCode,
   getProductFolderImages,
   readImageAsBase64,
+  isPathWithinLibraryFolders,
   pushToShopify,
   fetchShopifyProducts,
   debugShopifyDiagnostics,
