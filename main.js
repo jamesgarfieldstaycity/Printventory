@@ -3300,6 +3300,38 @@ if (!gotTheLock) {
           console.error('Server mode: failed to bind:', err.message);
           process.exit(1);
         }
+
+        // Warn (non-blocking - this is meant to run unattended) about any
+        // registered library folder that isn't a UNC path. validateUncPath()
+        // only throws when a specific operation (scan-directory, delete-file,
+        // trash-file, move-files, show-item-in-folder) actually runs against
+        // one of these, so nothing is silently broken or removed at startup -
+        // but every one of those operations will keep failing against models
+        // under a non-UNC folder for as long as the app stays in --server
+        // mode, so surface it once, up front, instead of only as a one-off
+        // error the first time someone tries to use the folder.
+        try {
+          const inDocker = isDockerContainer();
+          const nonCompliantFolders = db.prepare('SELECT path FROM library_folders').all()
+            .map((row) => row.path)
+            .filter((folderPath) => {
+              if (inDocker) return !folderPath.startsWith('/') && !isUncPath(folderPath);
+              return !isUncPath(folderPath);
+            });
+          if (nonCompliantFolders.length > 0) {
+            console.warn('='.repeat(70));
+            console.warn('[Server mode] WARNING: the following registered library folder(s) are not UNC paths:');
+            nonCompliantFolders.forEach((folderPath) => console.warn(`  - ${folderPath}`));
+            console.warn('Scanning, deleting, moving, or "show in folder" will fail for models under these folders while running in --server mode.');
+            console.warn(inDocker
+              ? 'Re-register them as an absolute Linux-style path (mounted share) or a UNC path to use these folders in server mode.'
+              : 'Re-register them as a UNC path (e.g. \\\\server\\share\\...) to use these folders in server mode.');
+            console.warn('='.repeat(70));
+          }
+        } catch (folderCheckErr) {
+          console.warn('[Server mode] Could not check library folders for UNC compliance:', folderCheckErr.message);
+        }
+
         setImmediate(() => {
           maybeRenewLetsEncryptCertificate().catch((renewErr) => {
             console.warn('[TLS] Startup renewal skipped:', renewErr.message);
