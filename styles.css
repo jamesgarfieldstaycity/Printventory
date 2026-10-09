@@ -13486,6 +13486,7 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
 
 .order-line-action {
   display: flex;
+  padding-left: 40px; /* aligns under the title/tags, past the 32px thumb + gap (same indent as .order-line-meta) */
 }
 
 .order-line-action-btn {
@@ -13523,6 +13524,7 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
 /* GR-PLAN-006 Phase B: Mark Printed row, under the existing action row */
 .order-line-print-row {
   display: flex;
+  padding-left: 40px; /* aligns under the title/tags, past the 32px thumb + gap (same indent as .order-line-meta) */
 }
 
 .order-line-print-btn {
@@ -13717,7 +13719,25 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
   color: #fff;
   border: 1px solid rgba(255, 180, 70, 0.4);
   border-radius: 6px;
-  padding: 5px 6px;
+  padding: 5px 22px 5px 6px; /* right padding clears the dropdown chevron below */
+}
+
+/* Searchable-dropdown affordance: a plain text input with a results panel
+   that only appears on focus/typing doesn't read as a dropdown when idle
+   (James reported it looked like a bare text box). A static chevron makes
+   the combobox recognizable at rest without touching the Fuse.js search
+   behavior itself. */
+.order-line-combobox::after {
+  content: '';
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid rgba(255, 255, 255, 0.45);
+  border-bottom: 1.5px solid rgba(255, 255, 255, 0.45);
+  transform: translateY(-65%) rotate(45deg);
+  pointer-events: none;
 }
 
 .order-line-link-input:disabled {
