@@ -4,6 +4,15 @@ All notable changes contributed via pull request are documented in this file.
 
 ## [Unreleased]
 
+## [2.2.16] - 2026-10-15
+
+- Pinned Tools, Filters and Orders panes, and the folder rail, start clear of the edge tabs instead of having their headers clipped
+- The Shopify product editor's photo grid loads photos as they scroll into view, a few at a time
+- A desktop notification appears when a sync finds new Shopify orders while Printventory isn't focused; clicking it opens the Orders pane
+- Open orders can be dragged into your own print order, with a button to reset to oldest first
+- The Orders badge, list and "Last synced" label update after the automatic 10-minute sync on the desktop, not only after Sync now
+- The "Link to model" box on order lines no longer runs past the right edge of the card
+
 ## [2.2.13] - 2026-10-01
 
 - Saving slicer settings says which name or path is already used when two entries match

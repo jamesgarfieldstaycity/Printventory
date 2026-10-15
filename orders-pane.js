@@ -280,9 +280,14 @@
 
   function renderOrderCard(order) {
     const lines = (order.lineItems || []).map(renderLineItem).join('');
+    const reorderable = canReorder() && order.local_status !== 'shipped';
+    const handleHtml = reorderable
+      ? '<span class="order-drag-handle" data-action="drag-handle" title="Drag to reorder the print queue" aria-hidden="true">⋮⋮</span>'
+      : '';
     return `
-      <div class="order-card" data-order-id="${order.id}">
+      <div class="order-card${reorderable ? ' order-card-reorderable' : ''}" data-order-id="${order.id}">
         <div class="order-card-header">
+          ${handleHtml}
           <span class="order-card-name">${escapeHtml(order.order_name)}</span>
           <span class="order-card-customer">${escapeHtml(order.customer_name || '')}</span>
         </div>
@@ -381,8 +386,106 @@
       }
       return;
     }
-    listEl.innerHTML = orders.map(renderOrderCard).join('');
+    const hasManualOrder = allOrdersCache.some((o) => o.local_status !== 'shipped' && o.queue_position != null);
+    const resetHtml = hasManualOrder && canReorder()
+      ? '<div class="orders-queue-reset-row"><button type="button" class="orders-queue-reset-btn" data-action="reset-queue" title="Clear your manual order and go back to oldest first">Reset to oldest first</button></div>'
+      : '';
+    listEl.innerHTML = resetHtml + orders.map(renderOrderCard).join('');
     restoreListUiState(listEl, uiState);
+  }
+
+  // ============================================
+  // Print-queue reordering (drag, 2026-10-15)
+  // ============================================
+  // Default order is FIFO (oldest first). Dragging a card by its handle
+  // saves a manual queue_position for every open order (local only, never
+  // sent to Shopify). New orders arrive without a position and join the end
+  // of the queue. Disabled while searching, since a filtered subset can't
+  // express a full queue order.
+
+  function canReorder() {
+    return !searchQuery.trim() && typeof window.electron?.setShopifyOrderQueue === 'function';
+  }
+
+  async function saveQueueOrder(orderIds) {
+    try {
+      const result = await window.electron.setShopifyOrderQueue(orderIds);
+      if (result && result.success === false) throw new Error(result.error || 'Could not save order');
+    } catch (e) {
+      console.error('[OrdersPane] Failed to save queue order:', e);
+      alert(`Could not save the new order: ${e.message || e}`);
+    }
+    await renderOrdersList(); // re-read so the list reflects what's actually stored
+  }
+
+  function bindQueueReorder() {
+    const listEl = document.getElementById('orders-list');
+    if (!listEl || listEl.dataset.reorderBound) return;
+    listEl.dataset.reorderBound = '1';
+    let draggedCard = null;
+
+    // Only the handle starts a drag: making whole cards draggable would
+    // stop text selection in the Ship panel's inputs.
+    listEl.addEventListener('mousedown', (e) => {
+      const handle = e.target.closest('[data-action="drag-handle"]');
+      const card = handle?.closest('.order-card-reorderable');
+      if (card) card.setAttribute('draggable', 'true');
+    });
+    listEl.addEventListener('mouseup', () => {
+      listEl.querySelectorAll('.order-card[draggable="true"]').forEach((c) => {
+        if (c !== draggedCard) c.removeAttribute('draggable');
+      });
+    });
+
+    listEl.addEventListener('dragstart', (e) => {
+      const card = e.target.closest?.('.order-card-reorderable[draggable="true"]');
+      if (!card) return;
+      draggedCard = card;
+      card.classList.add('order-card-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', card.dataset.orderId);
+    });
+
+    listEl.addEventListener('dragover', (e) => {
+      if (!draggedCard) return;
+      const target = e.target.closest?.('.order-card-reorderable');
+      if (!target || target === draggedCard) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const rect = target.getBoundingClientRect();
+      const before = e.clientY < rect.top + rect.height / 2;
+      listEl.querySelectorAll('.order-drop-before, .order-drop-after')
+        .forEach((el) => el.classList.remove('order-drop-before', 'order-drop-after'));
+      target.classList.add(before ? 'order-drop-before' : 'order-drop-after');
+    });
+
+    listEl.addEventListener('drop', (e) => {
+      if (!draggedCard) return;
+      const target = e.target.closest?.('.order-card-reorderable');
+      if (!target || target === draggedCard) return;
+      e.preventDefault();
+      const before = target.classList.contains('order-drop-before');
+      target.parentNode.insertBefore(draggedCard, before ? target : target.nextSibling);
+      // Every open order, in on-screen order. Shipped cards (if shown) have
+      // no handle and aren't part of the queue.
+      const ids = Array.from(listEl.querySelectorAll('.order-card-reorderable'))
+        .map((c) => Number(c.dataset.orderId));
+      saveQueueOrder(ids);
+    });
+
+    listEl.addEventListener('dragend', () => {
+      if (draggedCard) {
+        draggedCard.classList.remove('order-card-dragging');
+        draggedCard.removeAttribute('draggable');
+      }
+      draggedCard = null;
+      listEl.querySelectorAll('.order-drop-before, .order-drop-after')
+        .forEach((el) => el.classList.remove('order-drop-before', 'order-drop-after'));
+    });
+
+    listEl.addEventListener('click', (e) => {
+      if (e.target.closest('[data-action="reset-queue"]')) saveQueueOrder([]);
+    });
   }
 
   async function renderOrdersList() {
@@ -915,6 +1018,20 @@
     } catch (_) { /* ignore */ }
   }
 
+  /**
+   * Clicking the native "N new Shopify orders" notification (main.js,
+   * notifyNewShopifyOrdersOnDesktop) focuses the window and sends
+   * 'open-orders-pane' so the new orders are on screen straight away.
+   * Desktop only - server mode never raises that notification.
+   */
+  function bindDesktopNotificationClick() {
+    if (typeof window.electron?.on !== 'function') return;
+    window.electron.on('open-orders-pane', () => {
+      window.PaneController?.open?.(PANE_ID);
+      loadOrdersIfNeeded();
+    });
+  }
+
   function init() {
     registerPane();
     bindListEvents();
@@ -923,6 +1040,8 @@
     bindOrdersSearchInput();
     bindSyncedEvent();
     bindPaneOpenRefresh();
+    bindDesktopNotificationClick();
+    bindQueueReorder();
     refreshBadge();
     updateLastSyncedLabel();
     loadIfPersistedOpen();

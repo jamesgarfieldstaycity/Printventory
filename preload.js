@@ -172,6 +172,7 @@ contextBridge.exposeInMainWorld('electron', {
   // GR-PLAN-006: order sync
   syncShopifyOrders: (options) => ipcRenderer.invoke('sync-shopify-orders', options),
   getShopifyOrders: (options) => ipcRenderer.invoke('get-shopify-orders', options),
+  setShopifyOrderQueue: (orderIds) => ipcRenderer.invoke('set-shopify-order-queue', orderIds),
   linkOrderLineItem: (args) => ipcRenderer.invoke('link-order-line-item', args),
   getShopifyOrdersBadgeCount: () => ipcRenderer.invoke('get-shopify-orders-badge-count'),
   onShopifyOrdersSynced: (callback) => ipcRenderer.on('shopify-orders-synced', (event, summary) => callback(summary)),
@@ -420,6 +421,7 @@ contextBridge.exposeInMainWorld('electron', {
       'toggle-filters-pane',
       'toggle-sidebar',
       'toggle-orders-pane',
+      'open-orders-pane',
     ];
     if (validChannels.includes(channel)) {
       ipcRenderer.on(channel, (event, ...args) => callback(...args));

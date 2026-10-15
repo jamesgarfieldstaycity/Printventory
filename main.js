@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, dialog, Menu, shell, contextBridge } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, dialog, Menu, shell, contextBridge, Notification } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const supportLogs = require('./support-logs').createCapture();
@@ -381,10 +381,29 @@ global.sendEvent = function (event, channel, ...args) {
     global.broadcastEvent(channel, ...args);
   } else if (event && event.sender && !event.sender.isDestroyed()) {
     event.sender.send(channel, ...args);
+  } else if (!isServerMode) {
+    sendToMainWindow(channel, ...args);
   }
   // No server/window to notify yet (or any more) - safe to drop silently,
   // matching the "fire-and-forget" intent at every call site.
 };
+
+/**
+ * Desktop-mode fallback for global.sendEvent when there's no IPC event to
+ * reply to - i.e. background work like the 10-minute Shopify order sync,
+ * which calls its handler with event = null. Before 2026-10-15 those events
+ * were silently dropped on desktop, so background syncs updated the DB but
+ * never refreshed the Orders badge, list, "Last synced" label or toast.
+ */
+function sendToMainWindow(channel, ...args) {
+  try {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send(channel, ...args);
+    }
+  } catch (e) {
+    console.error(`[sendEvent] could not deliver '${channel}' to the main window:`, e);
+  }
+}
 
 // Store pending context menu actions for server mode (browser access)
 const pendingContextMenus = new Map();
@@ -1596,8 +1615,10 @@ ${bridgeCode}
   global.sendEvent = function(event, channel, ...args) {
     if (isServerMode && global.broadcastEvent) {
       global.broadcastEvent(channel, ...args);
-    } else if (event && event.sender) {
+    } else if (event && event.sender && !event.sender.isDestroyed()) {
       event.sender.send(channel, ...args);
+    } else if (!isServerMode) {
+      sendToMainWindow(channel, ...args);
     }
   };
 
@@ -2737,6 +2758,12 @@ async function restartHttpServer() {
 
 let db;
 let mainWindow;
+
+// Windows only shows toast notifications for an app with an AppUserModelID;
+// match electron-builder's appId so the installed app's Start Menu shortcut lines up.
+if (process.platform === 'win32' && typeof app.setAppUserModelId === 'function') {
+  app.setAppUserModelId('com.printventory.app');
+}
 let isGeneratingHashes = false; // Track hash generation state
 let isHashGenerationScheduled = false;
 let isCompressingThumbnailsBackground = false;
@@ -6949,7 +6976,13 @@ ipcMain.handle('sync-spoolman-filaments', syncSpoolmanFilamentsHandler);
  * replace it at runtime.
  */
 function shopifyNotifier(event) {
-  return (channel, ...args) => global.sendEvent(event, channel, ...args);
+  return (channel, ...args) => {
+    global.sendEvent(event, channel, ...args);
+    // Desktop OS notification for new orders (no-op unless the sync summary
+    // reports newOrders > 0). Hooked here rather than in the sync handler so
+    // the handler stays a thin core/ delegate (server-mode-shopify-core-extraction spec).
+    if (channel === 'shopify-orders-synced') notifyNewShopifyOrdersOnDesktop(args[0]);
+  };
 }
 
 /**
@@ -7404,6 +7437,39 @@ const SHOPIFY_ORDER_SYNC_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes; see GR-PLA
 async function syncShopifyOrdersHandler(event, options) {
   return shopifyOrders.syncShopifyOrders(db, shopifyNotifier(event), options);
 }
+
+/**
+ * GR-PLAN-006 Q10 (2026-10-15): native OS notification when a sync brings in
+ * new orders and the Printventory window isn't focused - the in-app badge and
+ * toast are invisible when James is away from the app. Desktop mode only:
+ * in server mode there's no local user to notify (the browser tab keeps its
+ * own badge/toast). Clicking it brings the window forward and opens the
+ * Orders pane. Never throws - a failed notification must not fail a sync.
+ */
+function notifyNewShopifyOrdersOnDesktop(summary) {
+  try {
+    const count = Number(summary?.newOrders) || 0;
+    if (count <= 0 || isServerMode) return;
+    if (!Notification || typeof Notification.isSupported !== 'function' || !Notification.isSupported()) return;
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    if (win && win.isFocused()) return; // in-app toast already covers it
+    const notification = new Notification({
+      title: 'Printventory',
+      body: count === 1 ? '1 new Shopify order' : `${count} new Shopify orders`,
+      silent: false
+    });
+    notification.on('click', () => {
+      if (!win || win.isDestroyed()) return;
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+      win.webContents.send('open-orders-pane');
+    });
+    notification.show();
+  } catch (e) {
+    console.error('[Shopify orders] desktop notification failed:', e);
+  }
+}
 ipcMain.handle('sync-shopify-orders', syncShopifyOrdersHandler);
 ipcHandlerRegistry.set('sync-shopify-orders', syncShopifyOrdersHandler);
 
@@ -7423,6 +7489,13 @@ async function getShopifyOrdersHandler(event, options) {
 }
 ipcMain.handle('get-shopify-orders', getShopifyOrdersHandler);
 ipcHandlerRegistry.set('get-shopify-orders', getShopifyOrdersHandler);
+
+/** Save the Orders pane's manual print-queue order (drag to reorder). */
+async function setShopifyOrderQueueHandler(event, orderIds) {
+  return shopifyOrders.setShopifyOrderQueue(db, orderIds);
+}
+ipcMain.handle('set-shopify-order-queue', setShopifyOrderQueueHandler);
+ipcHandlerRegistry.set('set-shopify-order-queue', setShopifyOrderQueueHandler);
 
 /**
  * Cheap count query for the Orders pane's edge-tab badge - avoids pulling

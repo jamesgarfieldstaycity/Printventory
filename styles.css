@@ -307,36 +307,36 @@ select option:not(:checked):not([selected]):not(:hover) {
 
 /* Main content margin when sidebar is pinned */
 body.sidebar-pinned:not(.filters-pane-pinned) .main-content {
-  margin-left: var(--sidebar-width, 320px);
+  margin-left: calc(var(--pane-gutter, 0px) + var(--sidebar-width, 320px));
 }
 
 /* Main content margin when only filters is pinned */
 body.filters-pane-pinned:not(.sidebar-pinned) .main-content {
-  margin-left: var(--filters-pane-width, 320px);
+  margin-left: calc(var(--pane-gutter, 0px) + var(--filters-pane-width, 320px));
 }
 
 /* Main content margin when both are pinned */
 body.sidebar-pinned.filters-pane-pinned .main-content {
-  margin-left: calc(var(--sidebar-width, 320px) + var(--filters-pane-width, 320px));
+  margin-left: calc(var(--pane-gutter, 0px) + var(--sidebar-width, 320px) + var(--filters-pane-width, 320px));
 }
 
 body.sidebar-pinned.folder-rail-open:not(.filters-pane-pinned) .main-content {
-  margin-left: calc(var(--sidebar-width, 320px) + var(--folder-rail-width, 0px));
+  margin-left: calc(var(--pane-gutter, 0px) + var(--sidebar-width, 320px) + var(--folder-rail-width, 0px));
 }
 
 /* GR-PLAN-006: Orders pane main-content offsets. Higher selector specificity
    (3 classes vs. 2) than the combos above guarantees these win whenever
    orders-pane is also pinned, regardless of stylesheet order. */
 body.orders-pane-pinned:not(.sidebar-pinned):not(.filters-pane-pinned) .main-content {
-  margin-left: var(--orders-pane-width, 360px);
+  margin-left: calc(var(--pane-gutter, 0px) + var(--orders-pane-width, 360px));
 }
 
 body.sidebar-pinned.orders-pane-pinned:not(.filters-pane-pinned) .main-content {
-  margin-left: calc(var(--sidebar-width, 320px) + var(--orders-pane-width, 360px));
+  margin-left: calc(var(--pane-gutter, 0px) + var(--sidebar-width, 320px) + var(--orders-pane-width, 360px));
 }
 
 body.filters-pane-pinned.orders-pane-pinned:not(.sidebar-pinned) .main-content {
-  margin-left: calc(var(--filters-pane-width, 320px) + var(--orders-pane-width, 360px));
+  margin-left: calc(var(--pane-gutter, 0px) + var(--filters-pane-width, 320px) + var(--orders-pane-width, 360px));
 }
 
 body.sidebar-pinned.filters-pane-pinned.orders-pane-pinned .main-content {
@@ -9828,7 +9828,7 @@ dialog[open] {
 .folder-rail {
   position: fixed;
   top: var(--toolbar-height, 56px);
-  left: var(--sidebar-width, 320px);
+  left: calc(var(--pane-gutter, 0px) + var(--sidebar-width, 320px));
   width: var(--folder-tree-width, 280px);
   height: calc(100vh - var(--toolbar-height, 56px));
   z-index: 90;
@@ -9843,7 +9843,7 @@ dialog[open] {
 
 /* Folder rail position when sidebar is NOT pinned */
 body:not(.sidebar-pinned) .folder-rail {
-  left: 0;
+  left: var(--pane-gutter, 0px);
 }
 
 .folder-rail.hidden,
@@ -12860,6 +12860,22 @@ body.is-panel-resizing * {
    DOCKABLE PANES - Power BI Style
    ============================================ */
 
+/* Edge-tab gutter (2026-10-15): the edge-tab column (28px + shadow) floats at
+   left:0 above any pinned pane (z-index 101 vs 100) whenever at least one
+   pane is NOT pinned - i.e. its tab is still showing. Every pinned-pane
+   left offset and main-content margin adds --pane-gutter so the leftmost
+   pinned pane starts clear of the tabs instead of having its header and
+   first rows clipped. Generalises the Orders-only 32px fix from 00c8aa5 to
+   Tools, Filters and the folder rail. Zero when all three panes are pinned
+   (no tabs visible). */
+:root {
+  --pane-gutter: 32px;
+}
+
+body.sidebar-pinned.filters-pane-pinned.orders-pane-pinned {
+  --pane-gutter: 0px;
+}
+
 /* Edge Tabs Container - vertical stack on left edge */
 .edge-tabs-container {
   position: fixed;
@@ -13113,9 +13129,9 @@ body.is-panel-resizing * {
   pointer-events: auto;
 }
 
-/* Sidebar always at left:0 when pinned (it's the leftmost pane) */
+/* Sidebar is the leftmost pane when pinned - offset by the edge-tab gutter */
 .sidebar.pane-pinned {
-  left: 0 !important;
+  left: var(--pane-gutter, 0px) !important;
   transform: translateX(0) !important;
 }
 
@@ -13127,12 +13143,12 @@ body.is-panel-resizing * {
 /* Filters pane stacking - to the right of sidebar when sidebar is pinned */
 /* Default: Filters at left:0 when sidebar is NOT pinned */
 body:not(.sidebar-pinned) #filters-pane.pane-pinned {
-  left: 0 !important;
+  left: var(--pane-gutter, 0px) !important;
 }
 
 /* When sidebar IS pinned, filters PINNED stacks to its right */
 body.sidebar-pinned #filters-pane.pane-pinned {
-  left: var(--sidebar-width, 320px) !important;
+  left: calc(var(--pane-gutter, 0px) + var(--sidebar-width, 320px)) !important;
 }
 
 /* Auto-hide revealed panes ALWAYS appear at left:0 (overlapping sidebar if needed) */
@@ -13258,15 +13274,15 @@ body.server-mode .edge-tabs-container {
    rules below already shift the pane past a full pinned-open pane's width,
    which already clears the 28px tab column with room to spare. */
 body:not(.sidebar-pinned):not(.filters-pane-pinned) #orders-pane.pane-pinned {
-  left: 32px !important;
+  left: var(--pane-gutter, 0px) !important;
 }
 
 body.sidebar-pinned:not(.filters-pane-pinned) #orders-pane.pane-pinned {
-  left: var(--sidebar-width, 320px) !important;
+  left: calc(var(--pane-gutter, 0px) + var(--sidebar-width, 320px)) !important;
 }
 
 body.filters-pane-pinned:not(.sidebar-pinned) #orders-pane.pane-pinned {
-  left: var(--filters-pane-width, 320px) !important;
+  left: calc(var(--pane-gutter, 0px) + var(--filters-pane-width, 320px)) !important;
 }
 
 body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
@@ -13375,6 +13391,61 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
+}
+
+/* Print-queue drag to reorder (2026-10-15) */
+.order-drag-handle {
+  cursor: grab;
+  color: #777;
+  font-size: 14px;
+  line-height: 1;
+  letter-spacing: -2px;
+  padding: 0 4px 0 0;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.order-drag-handle:hover {
+  color: #ccc;
+}
+
+/* Keep handle + order name together on the left; customer stays right. */
+.order-drag-handle + .order-card-name {
+  margin-right: auto;
+}
+
+.order-card-reorderable[draggable="true"] .order-drag-handle {
+  cursor: grabbing;
+}
+
+.order-card-dragging {
+  opacity: 0.45;
+}
+
+.order-card.order-drop-before {
+  box-shadow: 0 -3px 0 0 #4ade80;
+}
+
+.order-card.order-drop-after {
+  box-shadow: 0 3px 0 0 #4ade80;
+}
+
+.orders-queue-reset-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.orders-queue-reset-btn {
+  background: none;
+  border: none;
+  color: #8ab4ff;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.orders-queue-reset-btn:hover {
+  text-decoration: underline;
 }
 
 .order-card-name {
@@ -13491,6 +13562,7 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
 
 .order-line-action-btn {
   width: 100%;
+  box-sizing: border-box;
   background: rgba(74, 158, 255, 0.15);
   color: #4a9eff;
   border: 1px solid rgba(74, 158, 255, 0.3);
@@ -13720,6 +13792,10 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
   border: 1px solid rgba(255, 180, 70, 0.4);
   border-radius: 6px;
   padding: 5px 22px 5px 6px; /* right padding clears the dropdown chevron below */
+  /* Inputs default to content-box, so width:100% + padding + border pushed
+     the field ~30px past the right edge of the order line (and left the
+     chevron floating inside it). border-box keeps it inside its row. */
+  box-sizing: border-box;
 }
 
 /* Searchable-dropdown affordance: a plain text input with a results panel

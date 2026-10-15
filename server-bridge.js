@@ -547,6 +547,7 @@
     'debugShopifyDiagnostics': 'debug-shopify-diagnostics',
     'syncShopifyOrders': 'sync-shopify-orders',
     'getShopifyOrders': 'get-shopify-orders',
+    'setShopifyOrderQueue': 'set-shopify-order-queue',
     'linkOrderLineItem': 'link-order-line-item',
     'getShopifyOrdersBadgeCount': 'get-shopify-orders-badge-count',
     'markOrderLineItemPrinted': 'mark-order-line-item-printed',

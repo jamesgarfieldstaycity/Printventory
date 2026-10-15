@@ -2913,25 +2913,80 @@ window.renderShopifyPhotoGrid = async function renderShopifyPhotoGrid() {
   // Set up drag-and-drop reordering
   setupShopifyPhotoDragDrop(gridEl);
 
-  // Load thumbnails - handle both URLs and local paths
-  gridEl.querySelectorAll('.shopify-photo-item img').forEach(async (imgEl) => {
+  // Load thumbnails lazily - only photos scrolled into (or near) view, and
+  // at most a few local reads at once. Local photos come back as full-size
+  // base64 over IPC (WebSocket in server mode), so loading a product folder
+  // with dozens of camera photos all at once used to stall the editor.
+  lazyLoadShopifyEditorPhotos(gridEl);
+};
+
+/**
+ * Lazy-load the Shopify product editor's photo grid (2026-10-15, backlog item
+ * from GR-PLAN-004 "Thumbnail lazy-loading"). The main library grid is
+ * already virtualised; this dialog was the remaining place that loaded every
+ * image eagerly. IntersectionObserver with root=null still respects the
+ * dialog's own scroll clipping, so "visible" means visible in the dialog.
+ */
+const SHOPIFY_PHOTO_MAX_CONCURRENT_LOADS = 4;
+function lazyLoadShopifyEditorPhotos(gridEl) {
+  if (gridEl._photoObserver) {
+    gridEl._photoObserver.disconnect();
+    gridEl._photoObserver = null;
+  }
+  const generation = (gridEl._photoLoadGeneration || 0) + 1;
+  gridEl._photoLoadGeneration = generation;
+
+  const queue = [];
+  let active = 0;
+
+  async function loadOne(imgEl) {
     const imgPath = imgEl.dataset.path;
     const isUrl = imgEl.dataset.isUrl === 'true';
-
     try {
       if (isUrl) {
-        // Shopify image - use URL directly
-        imgEl.src = imgPath;
+        imgEl.src = imgPath; // Shopify CDN image - browser handles it
       } else {
-        // Local image - load via IPC
         const base64 = await window.electron.readImageAsBase64(imgPath);
+        // Grid re-rendered meanwhile (reorder/remove/refresh): drop the stale result.
+        if (gridEl._photoLoadGeneration !== generation) return;
         if (base64) imgEl.src = base64;
       }
     } catch (e) {
       console.error('Error loading image:', e);
     }
-  });
-};
+  }
+
+  function pump() {
+    while (active < SHOPIFY_PHOTO_MAX_CONCURRENT_LOADS && queue.length) {
+      if (gridEl._photoLoadGeneration !== generation) { queue.length = 0; return; }
+      const imgEl = queue.shift();
+      active++;
+      loadOne(imgEl).finally(() => { active--; pump(); });
+    }
+  }
+
+  function enqueue(imgEl) {
+    if (imgEl.dataset.lazyQueued === '1') return;
+    imgEl.dataset.lazyQueued = '1';
+    queue.push(imgEl);
+    pump();
+  }
+
+  const imgs = Array.from(gridEl.querySelectorAll('.shopify-photo-item img'));
+  if (typeof IntersectionObserver !== 'function') {
+    imgs.forEach(enqueue);
+    return;
+  }
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      observer.unobserve(entry.target);
+      enqueue(entry.target);
+    }
+  }, { root: null, rootMargin: '200px 0px' });
+  gridEl._photoObserver = observer;
+  imgs.forEach((imgEl) => observer.observe(imgEl));
+}
 
 /**
  * Set up drag-and-drop reordering for the photo grid.

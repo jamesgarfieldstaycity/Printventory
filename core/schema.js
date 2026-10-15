@@ -438,6 +438,15 @@ function ensureShopifyTablesExist(db) {
       }
     }
 
+    // Manual print-queue order for the Orders pane (2026-10-15). NULL = no
+    // manual position yet: those sort after positioned orders, oldest first,
+    // so the default stays FIFO and new orders join the end of the queue.
+    const orderCols = db.prepare("PRAGMA table_info(shopify_orders)").all().map(c => c.name);
+    if (!orderCols.includes('queue_position')) {
+      console.log('[Shopify] Migrating: adding queue_position column to shopify_orders...');
+      db.prepare('ALTER TABLE shopify_orders ADD COLUMN queue_position INTEGER').run();
+    }
+
     // GR-PLAN-006: James - "is it logged correctly? ... its critical it
     // works as etsy requires tracking info in order to release its
     // reserve." Before this, the only record of a fulfillment push was a

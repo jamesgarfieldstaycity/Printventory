@@ -335,7 +335,7 @@ async function getShopifyOrders(db, options = {}) {
     const orders = db.prepare(`
       SELECT * FROM shopify_orders
       ${includeShipped ? '' : "WHERE local_status != 'shipped'"}
-      ORDER BY order_created_at ASC
+      ORDER BY (queue_position IS NULL) ASC, queue_position ASC, order_created_at ASC
     `).all();
     const lineItemsStmt = db.prepare(`
       SELECT li.*, m.filePath AS matched_file_path, m.fileName AS matched_file_name
@@ -363,6 +363,34 @@ async function getShopifyOrders(db, options = {}) {
  * unmatched-line count so the badge can flag reconciliation work
  * distinctly from "ready to print".
  */
+/**
+ * Save the Orders pane's manual print-queue order (drag to reorder,
+ * 2026-10-15). `orderIds` is the full open-order sequence as shown, top to
+ * bottom; each gets queue_position 1..n. Pass an empty array / null to clear
+ * every manual position and go back to oldest-first (FIFO). Local only -
+ * never sent to Shopify.
+ */
+async function setShopifyOrderQueue(db, orderIds) {
+  try {
+    const ids = Array.isArray(orderIds)
+      ? orderIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
+      : [];
+    const apply = db.transaction(() => {
+      if (!ids.length) {
+        db.prepare('UPDATE shopify_orders SET queue_position = NULL').run();
+        return;
+      }
+      const stmt = db.prepare('UPDATE shopify_orders SET queue_position = ? WHERE id = ?');
+      ids.forEach((id, idx) => stmt.run(idx + 1, id));
+    });
+    apply();
+    return { success: true, count: ids.length };
+  } catch (error) {
+    console.error('Error saving order queue:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 async function getShopifyOrdersBadgeCount(db) {
   try {
     const openOrders = db.prepare(`
@@ -588,6 +616,7 @@ module.exports = {
   syncShopifyOrders,
   getShopifyOrders,
   getShopifyOrdersBadgeCount,
+  setShopifyOrderQueue,
   linkOrderLineItem,
   recomputeOrderLocalStatus,
   markOrderLineItemPrinted,
