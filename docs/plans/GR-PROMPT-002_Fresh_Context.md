@@ -1,0 +1,64 @@
+# GR-PROMPT-002 Fresh Context — Printventory production-planning build
+
+Paste or point a new Claude Code session at this file: *"Read docs/plans/GR-PROMPT-002_Fresh_Context.md and start the next step."* Written 2026-10-15; update the **Current state** section at the end of each session.
+
+## What Printventory is
+
+An Electron app (fork of TechJeeper Designs' Printventory, MIT) that links Gremlin Relics' Shopify listings to 3D-print model files and runs order → print → ship. One codebase, three run modes: desktop (`npm start`), server mode (`npm run start:server`, Express + WebSocket bridge, browser UI) and Docker (server mode + headless Chromium). Read `CLAUDE.md` for architecture and commands.
+
+Owner: James. Two people run the print shop; two Bambu Lab P1S printers (one single-colour on an external spool, one with two AMS units — the only colour printer).
+
+## Read first
+
+1. `docs/plans/GR-PLAN-009_Print_Queue_Scheduling.md` — scheduling design **and the combined 008 + 009 build order**. This is the roadmap.
+2. `docs/plans/GR-PLAN-008_Plates_Print_Lists_Stock_and_Filament_Costing.md` — plates, print lists, print jobs, stock, filament (deliveries, average cost, reconcile).
+3. `docs/plans/GR-PLAN-006_Order_Fulfillment_Workflow_Plan.md` — how the Orders pane, sync, matching and Ship work today (long; skim "Decisions" and the 2026-10-15 decision log).
+4. `docs/plans/GR-PLAN-007_...` — why desktop/server drift happens and the guardrails below.
+
+## Current state (2026-10-15)
+
+- `main` at **v2.2.16** (commit `678333f`, tagged), installer built. Work continues on branch **`feature/production-planning`**.
+- Built and released in 2.2.16: edge-tab gutter for all panes (`--pane-gutter`), lazy-loaded product-editor photos, desktop notification for new orders, drag-to-reorder order queue (`shopify_orders.queue_position`), background order sync now reaches the window on desktop (`sendToMainWindow` fallback in `global.sendEvent`), order-line combobox alignment.
+- Ship / Shopify fulfillment push confirmed working on a real order.
+- **Next step: A1 — ship-by date** (see build order in GR-PLAN-009).
+
+## Build order (summary — details in GR-PLAN-009)
+
+- **A1** Ship-by date: read Shopify fulfillment order `fulfillBy` (and whatever Etsy/QuickSync orders carry) on sync, store on `shopify_orders`, show "Ship by" + due-soon/overdue badge on order cards. Check real orders to see which fields are actually populated before building UI around them.
+- **A2** Production menu (desktop menu + server-mode in-page menu) and Printers window: move Orders / Printers / Filament / Parts / Shopify settings out of Tools; add is_active, multicolor_capable, ams_units, optional build plate size to `printers`.
+- **B1** Spike: inspect real 3MFs for plates, previews, slice data (time, grams per filament).
+- **B2** Plates + variant print lists (replaces one-file-per-variant).
+- **B3** Print jobs (queued → started → printed / failed) + order-card plate checklist; brings Mark Printed back.
+- **C1/C2** Scheduler core + Print Plan window.
+- **D1** Finished-print stock (yield, pull from stock, restock jobs, Stock window, reconcile).
+- **E1** Filament window (Record delivery with receipt, weighted average cost/kg, deductions, Reconcile stocktake, reorder list).
+
+## Guardrails (learned the hard way — follow them)
+
+- **Shopify handlers in `main.js` are thin delegates.** Anything between `// Shopify Integration Handlers` and `// End Shopify Integration Handlers` must be `return shopifyX.fn(db, ...)` into `core/shopify-*.js`. Enforced by `tests/server-mode-shopify-core-extraction.spec.js`. Put new logic in `core/`.
+- **Every new `preload.js` method needs a `methodToChannel` entry in `server-bridge.js`** (parity test: `tests/server-mode-ipc-surface-parity.spec.js`). New `ipcRenderer.on` channels go in preload's `validChannels`.
+- **New logic goes in Electron-free `core/*.js` modules** with tests (GR-PLAN-007 Phase 2). No `require('electron')` in `core/`.
+- **Anything user-facing must work in server mode too.** No separate native windows for new UI — use large dialogs (Filament Manager's full-screen toggle pattern). Desktop-only extras (OS notifications) are fine as additions, never as the only path.
+- **Line endings: `main.js` and `core/schema.js` are CRLF; most other files are LF.** Preserve whatever a file already uses. Check `git diff --stat` after edits — a whole-file diff means endings were flipped.
+- **Schema changes** go in `core/schema.js` using the existing `PRAGMA table_info` + `ALTER TABLE ... ADD COLUMN` migration pattern.
+- **Never write Shopify product, variant or inventory data.** Orders are read; only fulfillment is pushed. Shopify inventory stays print-on-demand; Printventory stock is local only.
+- **Background work has no IPC event.** Use `global.sendEvent(null, channel, ...)` — it now falls back to the main window on desktop and broadcasts in server mode.
+- New files must be covered by `package.json` `build.files` (`npm run test:build-files`).
+
+## Tests to run before committing
+
+```powershell
+npx playwright test tests/server-mode-ipc-surface-parity.spec.js tests/server-mode-shopify-core-extraction.spec.js tests/server-mode-schema-completeness.spec.js
+npm run test:build-files
+npm run test:print-events
+npm run test:printers
+```
+
+Plus a manual check in both `npm start` and `npm run start:server` for any UI change.
+
+## Working agreements with James
+
+- He tests in-app and reports with screenshots; fix what's reported, don't widen scope silently.
+- Keep plan docs current: update the relevant GR-PLAN in `docs/plans/` (status, decisions, what landed) as part of each step, and the **Current state** section of this file at session end.
+- Add user-facing changes to `CHANGELOG.md` under `[Unreleased]`.
+- Commit per step on `feature/production-planning` with clear messages; James decides when to merge and release (bump version in `package.json` and `package-lock.json`, CHANGELOG section, tag, `npm run build:win`).
