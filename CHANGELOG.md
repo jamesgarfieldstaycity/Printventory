@@ -6,6 +6,7 @@ All notable changes contributed via pull request are documented in this file.
 
 - Order cards show a "Ship by" date with a "Due in Nd" / "Due today" badge when it is close and an "Overdue" badge once it has passed. Shopify's own ship-by is used when it has one; Etsy orders from QuickSync carry none, so those show an estimate ("Ship by ~Fri, Oct 24 (est.)", muted) of order date + N business days (Mon-Fri)
 - New "Est. ship-by: N business days after order" setting at the top of the Orders pane (default 3); changing it re-syncs to recompute estimates, and a real Shopify date replaces an estimate on the next sync
+- Click the "Ship by" line on an order card to set a manual ship-by date (date picker, Save / Cancel), or "Clear override" to go back to the automatic one. A manual date is shown without "(est.)", is local only (never sent to Shopify), and is never replaced by a sync or the estimate. Precedence: manual > Shopify fulfillBy > estimate. Works in desktop and server mode
 
 ## [2.2.16] - 2026-10-15
 

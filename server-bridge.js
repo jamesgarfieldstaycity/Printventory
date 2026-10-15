@@ -548,6 +548,7 @@
     'syncShopifyOrders': 'sync-shopify-orders',
     'getShopifyOrders': 'get-shopify-orders',
     'setShopifyOrderQueue': 'set-shopify-order-queue',
+    'setShopifyOrderShipBy': 'set-shopify-order-ship-by',
     'linkOrderLineItem': 'link-order-line-item',
     'getShopifyOrdersBadgeCount': 'get-shopify-orders-badge-count',
     'markOrderLineItemPrinted': 'mark-order-line-item-printed',

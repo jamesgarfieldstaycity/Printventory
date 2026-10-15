@@ -106,13 +106,67 @@
     const badge = info.badge
       ? ` <span class="order-ship-by-badge order-ship-by-${info.level}">${escapeHtml(info.badge)}</span>`
       : '';
-    // 'estimated' = order date + N business days (QuickSync/Etsy orders carry
-    // no real ship-by); anything else is Shopify's own fulfillBy.
-    const estimated = order.ship_by_source === 'estimated';
+    // Source: 'manual' = set by hand here; 'estimated' = order date + N
+    // business days (QuickSync/Etsy orders carry no real ship-by); anything
+    // else is Shopify's own fulfillBy. Only the estimate gets "~" / "(est.)".
+    const source = order.ship_by_source;
+    const estimated = source === 'estimated';
+    const manual = source === 'manual';
     const label = estimated
       ? `Ship by ~${escapeHtml(info.dateLabel)} (est.)`
       : `Ship by ${escapeHtml(info.dateLabel)}`;
-    return `<div class="order-ship-by${estimated ? ' order-ship-by-est' : ''}"${estimated ? ' title="Estimated: order date + the business days set in the Orders pane. Shopify gave no ship-by date."' : ''}>${label}${badge}</div>`;
+    const title = estimated
+      ? 'Estimated: order date + the business days set in the Orders pane. Click to set a date.'
+      : manual
+        ? 'Set manually. Click to change or clear.'
+        : "From Shopify. Click to override with your own date.";
+    const dueIso = new Date(order.ship_by);
+    const pad = (n) => String(n).padStart(2, '0');
+    const dateValue = `${dueIso.getFullYear()}-${pad(dueIso.getMonth() + 1)}-${pad(dueIso.getDate())}`;
+    return `
+      <div class="order-ship-by-block" data-order-id="${order.id}">
+        <button type="button" class="order-ship-by${estimated ? ' order-ship-by-est' : ''}" data-action="edit-ship-by" title="${escapeHtml(title)}">${label}${badge}</button>
+        <div class="order-ship-by-editor" hidden>
+          <input type="date" class="order-ship-by-date" value="${dateValue}" aria-label="Ship-by date">
+          <button type="button" class="order-ship-by-btn" data-action="save-ship-by">Save</button>
+          ${manual ? '<button type="button" class="order-ship-by-btn" data-action="clear-ship-by">Clear override</button>' : ''}
+          <button type="button" class="order-ship-by-btn" data-action="cancel-ship-by">Cancel</button>
+        </div>
+      </div>`;
+  }
+
+  /**
+   * Save (date = 'YYYY-MM-DD') or clear (date = null) the manual ship-by.
+   * Local only. Re-reads the list afterwards so the card shows what's stored.
+   */
+  async function saveShipByOverride(orderId, date) {
+    try {
+      const result = await window.electron.setShopifyOrderShipBy({ orderId: Number(orderId), date });
+      if (result && result.success === false) throw new Error(result.error || 'Could not save ship-by');
+    } catch (e) {
+      console.error('[OrdersPane] Failed to save ship-by override:', e);
+      alert(`Could not save the ship-by date: ${e.message || e}`);
+      return;
+    }
+    await renderOrdersList();
+  }
+
+  function handleShipByAction(actionEl) {
+    const block = actionEl.closest('.order-ship-by-block');
+    if (!block) return;
+    const editor = block.querySelector('.order-ship-by-editor');
+    const action = actionEl.dataset.action;
+    if (action === 'edit-ship-by') {
+      if (editor) editor.hidden = !editor.hidden;
+    } else if (action === 'cancel-ship-by') {
+      if (editor) editor.hidden = true;
+    } else if (action === 'save-ship-by') {
+      const date = block.querySelector('.order-ship-by-date')?.value || '';
+      if (!date) { alert('Pick a date first, or use Cancel.'); return; }
+      saveShipByOverride(block.dataset.orderId, date);
+    } else if (action === 'clear-ship-by') {
+      saveShipByOverride(block.dataset.orderId, null);
+    }
   }
 
   async function ensureModelsCache() {
@@ -336,7 +390,13 @@
   }
 
   function captureListUiState(listEl) {
-    const state = { scrollTop: listEl.scrollTop, shipDrafts: {} };
+    const state = { scrollTop: listEl.scrollTop, shipDrafts: {}, shipByDrafts: {} };
+    // An open ship-by date picker survives a background sync's list rebuild.
+    listEl.querySelectorAll('.order-ship-by-block[data-order-id]').forEach((block) => {
+      const editor = block.querySelector('.order-ship-by-editor');
+      if (!editor || editor.hidden) return;
+      state.shipByDrafts[block.dataset.orderId] = block.querySelector('.order-ship-by-date')?.value || '';
+    });
     listEl.querySelectorAll('.order-ship-section[data-order-id]').forEach((section) => {
       const panel = section.querySelector('.order-ship-panel');
       if (!panel || panel.hidden) return;
@@ -363,6 +423,14 @@
    */
   function restoreListUiState(listEl, state) {
     if (!state) return;
+    for (const [orderId, dateValue] of Object.entries(state.shipByDrafts || {})) {
+      const block = listEl.querySelector(`.order-ship-by-block[data-order-id="${orderId}"]`);
+      const editor = block?.querySelector('.order-ship-by-editor');
+      if (!editor) continue;
+      editor.hidden = false;
+      const dateInput = block.querySelector('.order-ship-by-date');
+      if (dateInput && dateValue) dateInput.value = dateValue;
+    }
     for (const [orderId, draft] of Object.entries(state.shipDrafts)) {
       const section = listEl.querySelector(`.order-ship-section[data-order-id="${orderId}"]`);
       const panel = section?.querySelector('.order-ship-panel');
@@ -812,6 +880,8 @@
     listEl.dataset.bound = '1';
 
     listEl.addEventListener('click', (e) => {
+      const shipByEl = e.target.closest('[data-action="edit-ship-by"], [data-action="save-ship-by"], [data-action="clear-ship-by"], [data-action="cancel-ship-by"]');
+      if (shipByEl) { handleShipByAction(shipByEl); return; }
       const slicerBtn = e.target.closest('[data-action="open-slicer"]');
       if (slicerBtn) { handleOpenSlicer(slicerBtn); return; }
       const managerBtn = e.target.closest('[data-action="open-product-manager"]');

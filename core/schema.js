@@ -460,6 +460,16 @@ function ensureShopifyTablesExist(db) {
       console.log('[Shopify] Migrating: adding ship_by_source column to shopify_orders...');
       db.prepare('ALTER TABLE shopify_orders ADD COLUMN ship_by_source TEXT').run();
     }
+    // Sync always stores its automatic result (Shopify fulfillBy, else the
+    // estimate) here; ship_by / ship_by_source are the EFFECTIVE value and can
+    // also be 'manual' (user override). Keeping the automatic value lets
+    // "Clear override" restore it exactly, with no network call.
+    if (!orderCols.includes('ship_by_auto')) {
+      console.log('[Shopify] Migrating: adding ship_by_auto columns to shopify_orders...');
+      db.prepare('ALTER TABLE shopify_orders ADD COLUMN ship_by_auto DATETIME').run();
+      db.prepare('ALTER TABLE shopify_orders ADD COLUMN ship_by_auto_source TEXT').run();
+      db.prepare("UPDATE shopify_orders SET ship_by_auto = ship_by, ship_by_auto_source = ship_by_source WHERE ship_by_source IN ('shopify', 'estimated')").run();
+    }
 
     // GR-PLAN-006: James - "is it logged correctly? ... its critical it
     // works as etsy requires tracking info in order to release its

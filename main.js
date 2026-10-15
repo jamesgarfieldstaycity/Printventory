@@ -7497,6 +7497,13 @@ async function setShopifyOrderQueueHandler(event, orderIds) {
 ipcMain.handle('set-shopify-order-queue', setShopifyOrderQueueHandler);
 ipcHandlerRegistry.set('set-shopify-order-queue', setShopifyOrderQueueHandler);
 
+/** Set/clear the manual ship-by override on an order (click the Ship-by line). */
+async function setShopifyOrderShipByHandler(event, args) {
+  return shopifyOrders.setShopifyOrderShipBy(db, args);
+}
+ipcMain.handle('set-shopify-order-ship-by', setShopifyOrderShipByHandler);
+ipcHandlerRegistry.set('set-shopify-order-ship-by', setShopifyOrderShipByHandler);
+
 /**
  * Cheap count query for the Orders pane's edge-tab badge - avoids pulling
  * every order + line item (getShopifyOrdersHandler) just to show a number.

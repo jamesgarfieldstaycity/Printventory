@@ -13470,9 +13470,66 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
 }
 
 /* GR-PLAN-009 A1: ship-by line + due-soon / overdue badge */
+/* Rendered as a <button> so it is keyboard-reachable; click opens the date picker */
 .order-ship-by {
+  display: inline;
+  padding: 0;
+  margin: 0;
+  background: none;
+  border: none;
+  font: inherit;
   font-size: 12px;
+  text-align: left;
   color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+}
+
+.order-ship-by:hover,
+.order-ship-by:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.order-ship-by-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.order-ship-by-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.order-ship-by-editor[hidden] {
+  display: none;
+}
+
+.order-ship-by-date {
+  padding: 2px 4px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: #fff;
+  color-scheme: dark;
+}
+
+.order-ship-by-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+}
+
+.order-ship-by-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
 }
 
 .order-ship-by-badge {

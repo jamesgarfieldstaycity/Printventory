@@ -234,11 +234,19 @@ function addBusinessDays(fromIso, days) {
 }
 
 /**
- * A real Shopify fulfillBy always wins; otherwise estimate from the order
- * date. Re-run on every sync, so a real date appearing later overrides an
- * earlier estimate.
+ * Ship-by precedence: manual override > Shopify fulfillBy > estimate (order
+ * date + N business days). Re-run on every sync, so a real date appearing
+ * later replaces an estimate, while a manual date (passed in from the stored
+ * row) is never replaced by either.
+ *
+ * @param {object} order - synced order (fulfillmentOrders, createdAt)
+ * @param {number} processingDays - business days for the estimate
+ * @param {string|null} [manualShipBy] - the stored manual override, if any
  */
-function resolveShipBy(order, processingDays) {
+function resolveShipBy(order, processingDays, manualShipBy) {
+  if (manualShipBy && !Number.isNaN(new Date(manualShipBy).getTime())) {
+    return { shipBy: manualShipBy, source: 'manual' };
+  }
   const real = pickShipBy(order);
   if (real) return { shipBy: real, source: 'shopify' };
   const estimate = addBusinessDays(order && order.createdAt, processingDays);
@@ -274,8 +282,9 @@ async function syncShopifyOrders(db, notify, options = {}) {
     INSERT INTO shopify_orders (
       shopify_order_gid, order_name, order_created_at, customer_name,
       total_amount, total_currency, financial_status, fulfillment_status,
-      ship_by, ship_by_source, last_synced_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ship_by, ship_by_source, ship_by_auto, ship_by_auto_source,
+      last_synced_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(shopify_order_gid) DO UPDATE SET
       order_name = excluded.order_name,
       customer_name = excluded.customer_name,
@@ -285,10 +294,14 @@ async function syncShopifyOrders(db, notify, options = {}) {
       fulfillment_status = excluded.fulfillment_status,
       ship_by = excluded.ship_by,
       ship_by_source = excluded.ship_by_source,
+      ship_by_auto = excluded.ship_by_auto,
+      ship_by_auto_source = excluded.ship_by_auto_source,
       last_synced_at = CURRENT_TIMESTAMP,
       updated_at = CURRENT_TIMESTAMP
   `);
-  const getOrderId = db.prepare('SELECT id FROM shopify_orders WHERE shopify_order_gid = ?');
+  // ship_by / ship_by_source come back too: a stored 'manual' value is the
+  // override that resolveShipBy must preserve across syncs.
+  const getOrderId = db.prepare('SELECT id, ship_by, ship_by_source FROM shopify_orders WHERE shopify_order_gid = ?');
 
   // GR-PLAN-006: historical-shipment backfill (see pickHistoricalShipment
   // above). Deliberately does NOT touch quantity_printed on the order's
@@ -341,18 +354,25 @@ async function syncShopifyOrders(db, notify, options = {}) {
   let historicalShipmentsBackfilled = 0;
   let ordersWithRealShipBy = 0;
   let ordersWithEstimatedShipBy = 0;
+  let ordersWithManualShipBy = 0;
   const processingDays = readProcessingDays(db);
 
   const runSync = db.transaction((fetchedOrders) => {
     for (const order of fetchedOrders) {
       const existed = getOrderId.get(order.id);
-      const { shipBy, source: shipBySource } = resolveShipBy(order, processingDays);
+      // Automatic value (Shopify fulfillBy, else estimate) is always stored in
+      // ship_by_auto*; the effective ship_by only differs when a manual
+      // override is already on the row, which then wins.
+      const auto = resolveShipBy(order, processingDays);
+      const manualShipBy = existed && existed.ship_by_source === 'manual' ? existed.ship_by : null;
+      const { shipBy, source: shipBySource } = resolveShipBy(order, processingDays, manualShipBy);
       if (shipBySource === 'shopify') ordersWithRealShipBy++;
       else if (shipBySource === 'estimated') ordersWithEstimatedShipBy++;
+      else if (shipBySource === 'manual') ordersWithManualShipBy++;
       upsertOrder.run(
         order.id, order.name, order.createdAt, order.customerName ?? null,
         order.totalAmount, order.totalCurrency, order.financialStatus, order.fulfillmentStatus,
-        shipBy, shipBySource
+        shipBy, shipBySource, auto.shipBy, auto.source
       );
       if (!existed) newOrders++;
       const orderRow = getOrderId.get(order.id);
@@ -384,7 +404,7 @@ async function syncShopifyOrders(db, notify, options = {}) {
     `[Shopify orders] synced ${orders.length} order(s) ` +
     `(${newOrders} new, ${newlyMatchedLines} line(s) matched, ${unmatchedLines} unmatched, ` +
     `${historicalShipmentsBackfilled} historical shipment(s) backfilled, ` +
-    `ship-by: ${ordersWithRealShipBy} from Shopify, ${ordersWithEstimatedShipBy} estimated at ${processingDays} business day(s))`
+    `ship-by: ${ordersWithRealShipBy} from Shopify, ${ordersWithEstimatedShipBy} estimated at ${processingDays} business day(s), ${ordersWithManualShipBy} manual)`
   );
 
   const summary = {
@@ -471,6 +491,61 @@ async function setShopifyOrderQueue(db, orderIds) {
     return { success: true, count: ids.length };
   } catch (error) {
     console.error('Error saving order queue:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * 'YYYY-MM-DD' (an <input type="date"> value) -> ISO string at local noon, the
+ * same convention as the estimate, so the calendar day survives timezone
+ * differences between the server and the browser. Null unless it is a real
+ * calendar date (rejects '2026-02-30', '', other formats).
+ */
+function dateInputToNoonIso(value) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value == null ? '' : value).trim());
+  if (!m) return null;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const date = new Date(y, mo - 1, d, 12, 0, 0);
+  if (date.getFullYear() !== y || date.getMonth() !== mo - 1 || date.getDate() !== d) return null;
+  return date.toISOString();
+}
+
+/**
+ * Set or clear the manual ship-by override on an order (GR-PLAN-009 A1).
+ * Local only - never sent to Shopify. `date` is 'YYYY-MM-DD' to set; empty/
+ * null clears it, restoring the stored automatic value (Shopify fulfillBy or
+ * the estimate, kept in ship_by_auto* on every sync) without a network call.
+ * Sync never replaces a manual value (see resolveShipBy).
+ */
+async function setShopifyOrderShipBy(db, { orderId, date } = {}) {
+  try {
+    const id = Number(orderId);
+    if (!Number.isInteger(id) || id <= 0) return { success: false, error: 'Invalid order' };
+    const row = db.prepare(
+      'SELECT id, ship_by, ship_by_source, ship_by_auto, ship_by_auto_source FROM shopify_orders WHERE id = ?'
+    ).get(id);
+    if (!row) return { success: false, error: 'Order not found' };
+
+    const clearing = date === null || date === undefined || String(date).trim() === '';
+    let shipBy;
+    let source;
+    if (clearing) {
+      if (row.ship_by_source !== 'manual') {
+        return { success: true, shipBy: row.ship_by, source: row.ship_by_source };
+      }
+      shipBy = row.ship_by_auto || null;
+      source = row.ship_by_auto ? row.ship_by_auto_source : null;
+    } else {
+      shipBy = dateInputToNoonIso(date);
+      if (!shipBy) return { success: false, error: 'Invalid date' };
+      source = 'manual';
+    }
+    db.prepare(
+      'UPDATE shopify_orders SET ship_by = ?, ship_by_source = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    ).run(shipBy, source, id);
+    return { success: true, shipBy, source };
+  } catch (error) {
+    console.error('Error saving order ship-by override:', error);
     return { success: false, error: error.message };
   }
 }
@@ -700,6 +775,8 @@ module.exports = {
   pickShipBy,
   addBusinessDays,
   resolveShipBy,
+  dateInputToNoonIso,
+  setShopifyOrderShipBy,
   normalizeProcessingDays,
   DEFAULT_PROCESSING_DAYS,
   PROCESSING_DAYS_SETTING_KEY,
