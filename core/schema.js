@@ -447,6 +447,20 @@ function ensureShopifyTablesExist(db) {
       db.prepare('ALTER TABLE shopify_orders ADD COLUMN queue_position INTEGER').run();
     }
 
+    // GR-PLAN-009 A1: ship-by date, from the Shopify fulfillment order's
+    // fulfillBy (ISO UTC string). NULL = Shopify gave no ship-by for this order.
+    if (!orderCols.includes('ship_by')) {
+      console.log('[Shopify] Migrating: adding ship_by column to shopify_orders...');
+      db.prepare('ALTER TABLE shopify_orders ADD COLUMN ship_by DATETIME').run();
+    }
+    // 'shopify' = real fulfillBy from Shopify; 'estimated' = order date + N
+    // business days (QuickSync/Etsy orders carry no ship-by anywhere - checked
+    // 2026-10-15: fulfillBy null, no tags/note/attributes/metafields).
+    if (!orderCols.includes('ship_by_source')) {
+      console.log('[Shopify] Migrating: adding ship_by_source column to shopify_orders...');
+      db.prepare('ALTER TABLE shopify_orders ADD COLUMN ship_by_source TEXT').run();
+    }
+
     // GR-PLAN-006: James - "is it logged correctly? ... its critical it
     // works as etsy requires tracking info in order to release its
     // reserve." Before this, the only record of a fulfillment push was a

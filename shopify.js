@@ -1045,6 +1045,14 @@ async function fetchOrders(storeDomain, clientId, clientSecret, options = {}) {
                 url
               }
             }
+            fulfillmentOrders(first: 5) {
+              edges {
+                node {
+                  status
+                  fulfillBy
+                }
+              }
+            }
             lineItems(first: 100) {
               edges {
                 node {
@@ -1137,6 +1145,12 @@ async function fetchOrders(storeDomain, clientId, clientSecret, options = {}) {
             number: t.number || null,
             url: t.url || null
           }))
+        })),
+        // GR-PLAN-009 A1: raw fulfillment-order status + fulfillBy, reduced
+        // to a single ship-by date by pickShipBy (core/shopify-orders.js).
+        fulfillmentOrders: (node.fulfillmentOrders?.edges || []).map((e) => ({
+          status: e.node?.status || null,
+          fulfillBy: e.node?.fulfillBy || null
         })),
         lineItems
       });

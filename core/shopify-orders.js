@@ -173,6 +173,80 @@ function pickHistoricalShipment(order) {
 }
 
 /**
+ * GR-PLAN-009 A1: reduce an order's Shopify fulfillment orders to one ship-by
+ * ISO string. Prefers the earliest fulfillBy among fulfillment orders that are
+ * still active (anything not CLOSED / CANCELLED); if none are active (e.g. the
+ * order is already fulfilled) falls back to the earliest of any, so a shipped
+ * order keeps its historical ship-by. Returns null when Shopify gave none
+ * (every QuickSync/Etsy order) - resolveShipBy supplies the estimate then.
+ */
+function pickShipBy(order) {
+  const fos = Array.isArray(order && order.fulfillmentOrders) ? order.fulfillmentOrders : [];
+  const earliest = (list) => {
+    let best = null;
+    for (const fo of list) {
+      if (!fo || !fo.fulfillBy) continue;
+      const t = new Date(fo.fulfillBy).getTime();
+      if (Number.isNaN(t)) continue;
+      if (best === null || t < best.t) best = { t, iso: fo.fulfillBy };
+    }
+    return best ? best.iso : null;
+  };
+  const active = fos.filter((fo) => fo && fo.status !== 'CLOSED' && fo.status !== 'CANCELLED');
+  return earliest(active) || earliest(fos);
+}
+
+const DEFAULT_PROCESSING_DAYS = 3;
+const MAX_PROCESSING_DAYS = 30;
+const PROCESSING_DAYS_SETTING_KEY = 'orderProcessingBusinessDays';
+
+/** Clamp to a whole number 0..30; anything unusable becomes the default. */
+function normalizeProcessingDays(value) {
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_PROCESSING_DAYS;
+  return Math.min(n, MAX_PROCESSING_DAYS);
+}
+
+function readProcessingDays(db) {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(PROCESSING_DAYS_SETTING_KEY);
+  return row && row.value !== '' && row.value != null
+    ? normalizeProcessingDays(row.value)
+    : DEFAULT_PROCESSING_DAYS;
+}
+
+/**
+ * order date + N business days (Mon-Fri only; no public holidays), counted on
+ * the local calendar date. Returned as an ISO string at local noon so the
+ * calendar day survives a timezone shift between machines. Null if the
+ * order date is missing/unparseable.
+ */
+function addBusinessDays(fromIso, days) {
+  const from = new Date(fromIso);
+  if (!fromIso || Number.isNaN(from.getTime())) return null;
+  const d = new Date(from.getFullYear(), from.getMonth(), from.getDate(), 12, 0, 0);
+  let remaining = normalizeProcessingDays(days);
+  while (remaining > 0) {
+    d.setDate(d.getDate() + 1);
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) remaining--;
+  }
+  return d.toISOString();
+}
+
+/**
+ * A real Shopify fulfillBy always wins; otherwise estimate from the order
+ * date. Re-run on every sync, so a real date appearing later overrides an
+ * earlier estimate.
+ */
+function resolveShipBy(order, processingDays) {
+  const real = pickShipBy(order);
+  if (real) return { shipBy: real, source: 'shopify' };
+  const estimate = addBusinessDays(order && order.createdAt, processingDays);
+  if (estimate) return { shipBy: estimate, source: 'estimated' };
+  return { shipBy: null, source: null };
+}
+
+/**
  * Sync orders from Shopify into shopify_orders / shopify_order_line_items.
  * Upserts by shopify_order_gid / shopify_line_item_gid so a re-sync is safe
  * to run repeatedly (manual "Sync now" button, or the interval watcher).
@@ -200,8 +274,8 @@ async function syncShopifyOrders(db, notify, options = {}) {
     INSERT INTO shopify_orders (
       shopify_order_gid, order_name, order_created_at, customer_name,
       total_amount, total_currency, financial_status, fulfillment_status,
-      last_synced_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ship_by, ship_by_source, last_synced_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(shopify_order_gid) DO UPDATE SET
       order_name = excluded.order_name,
       customer_name = excluded.customer_name,
@@ -209,6 +283,8 @@ async function syncShopifyOrders(db, notify, options = {}) {
       total_currency = excluded.total_currency,
       financial_status = excluded.financial_status,
       fulfillment_status = excluded.fulfillment_status,
+      ship_by = excluded.ship_by,
+      ship_by_source = excluded.ship_by_source,
       last_synced_at = CURRENT_TIMESTAMP,
       updated_at = CURRENT_TIMESTAMP
   `);
@@ -263,13 +339,20 @@ async function syncShopifyOrders(db, notify, options = {}) {
   let newlyMatchedLines = 0;
   let unmatchedLines = 0;
   let historicalShipmentsBackfilled = 0;
+  let ordersWithRealShipBy = 0;
+  let ordersWithEstimatedShipBy = 0;
+  const processingDays = readProcessingDays(db);
 
   const runSync = db.transaction((fetchedOrders) => {
     for (const order of fetchedOrders) {
       const existed = getOrderId.get(order.id);
+      const { shipBy, source: shipBySource } = resolveShipBy(order, processingDays);
+      if (shipBySource === 'shopify') ordersWithRealShipBy++;
+      else if (shipBySource === 'estimated') ordersWithEstimatedShipBy++;
       upsertOrder.run(
         order.id, order.name, order.createdAt, order.customerName ?? null,
-        order.totalAmount, order.totalCurrency, order.financialStatus, order.fulfillmentStatus
+        order.totalAmount, order.totalCurrency, order.financialStatus, order.fulfillmentStatus,
+        shipBy, shipBySource
       );
       if (!existed) newOrders++;
       const orderRow = getOrderId.get(order.id);
@@ -300,7 +383,8 @@ async function syncShopifyOrders(db, notify, options = {}) {
   console.log(
     `[Shopify orders] synced ${orders.length} order(s) ` +
     `(${newOrders} new, ${newlyMatchedLines} line(s) matched, ${unmatchedLines} unmatched, ` +
-    `${historicalShipmentsBackfilled} historical shipment(s) backfilled)`
+    `${historicalShipmentsBackfilled} historical shipment(s) backfilled, ` +
+    `ship-by: ${ordersWithRealShipBy} from Shopify, ${ordersWithEstimatedShipBy} estimated at ${processingDays} business day(s))`
   );
 
   const summary = {
@@ -613,6 +697,12 @@ async function shipShopifyOrder(db, notify, { orderId, carrier, trackingNumber, 
 module.exports = {
   matchOrderLineItem,
   pickHistoricalShipment,
+  pickShipBy,
+  addBusinessDays,
+  resolveShipBy,
+  normalizeProcessingDays,
+  DEFAULT_PROCESSING_DAYS,
+  PROCESSING_DAYS_SETTING_KEY,
   syncShopifyOrders,
   getShopifyOrders,
   getShopifyOrdersBadgeCount,

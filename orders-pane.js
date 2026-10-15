@@ -82,6 +82,39 @@
     }
   }
 
+  // GR-PLAN-009 A1: ship-by label + urgency. Compared by local calendar day
+  // so "Due today" doesn't flip to overdue part-way through the day.
+  const SHIP_BY_SOON_DAYS = 2;
+
+  function describeShipBy(iso) {
+    if (!iso) return null;
+    const due = new Date(iso);
+    if (Number.isNaN(due.getTime())) return null;
+    const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const days = Math.round((startOfDay(due) - startOfDay(new Date())) / 86400000);
+    const dateLabel = due.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    if (days < 0) return { level: 'overdue', dateLabel, badge: `Overdue ${-days}d` };
+    if (days === 0) return { level: 'soon', dateLabel, badge: 'Due today' };
+    if (days <= SHIP_BY_SOON_DAYS) return { level: 'soon', dateLabel, badge: `Due in ${days}d` };
+    return { level: 'ok', dateLabel, badge: '' };
+  }
+
+  function renderShipBy(order) {
+    if (order.local_status === 'shipped') return '';
+    const info = describeShipBy(order.ship_by);
+    if (!info) return '';
+    const badge = info.badge
+      ? ` <span class="order-ship-by-badge order-ship-by-${info.level}">${escapeHtml(info.badge)}</span>`
+      : '';
+    // 'estimated' = order date + N business days (QuickSync/Etsy orders carry
+    // no real ship-by); anything else is Shopify's own fulfillBy.
+    const estimated = order.ship_by_source === 'estimated';
+    const label = estimated
+      ? `Ship by ~${escapeHtml(info.dateLabel)} (est.)`
+      : `Ship by ${escapeHtml(info.dateLabel)}`;
+    return `<div class="order-ship-by${estimated ? ' order-ship-by-est' : ''}"${estimated ? ' title="Estimated: order date + the business days set in the Orders pane. Shopify gave no ship-by date."' : ''}>${label}${badge}</div>`;
+  }
+
   async function ensureModelsCache() {
     if (modelsCache) return modelsCache;
     try {
@@ -295,6 +328,7 @@
           ${formatOrderDate(order.order_created_at)} · ${escapeHtml(order.financial_status || '')}
           ${renderLocalStatusPill(order.local_status)}
         </div>
+        ${renderShipBy(order)}
         <div class="order-lines">${lines}</div>
         ${renderShipSection(order)}
       </div>
@@ -956,6 +990,49 @@
   }
 
   // ============================================
+  // Estimated ship-by: business days after the order date (setting
+  // orderProcessingBusinessDays, default 3, whole number 0-30 - same bounds
+  // as core/shopify-orders.js). Estimates are stored at sync time, so a
+  // change re-syncs to recompute them.
+  // ============================================
+
+  const DEFAULT_PROCESSING_DAYS = 3;
+  const MAX_PROCESSING_DAYS = 30;
+
+  async function loadProcessingDaysInput() {
+    const input = document.getElementById('orders-processing-days-input');
+    if (!input) return;
+    try {
+      const saved = await window.electron?.getSetting?.('orderProcessingBusinessDays');
+      const n = Math.floor(Number(saved));
+      input.value = saved !== null && saved !== undefined && saved !== '' && Number.isFinite(n) && n >= 0
+        ? Math.min(n, MAX_PROCESSING_DAYS)
+        : DEFAULT_PROCESSING_DAYS;
+    } catch (_) {
+      input.value = DEFAULT_PROCESSING_DAYS;
+    }
+  }
+
+  function bindProcessingDaysInput() {
+    const input = document.getElementById('orders-processing-days-input');
+    if (!input || input.dataset.bound) return;
+    input.dataset.bound = '1';
+    loadProcessingDaysInput();
+    input.addEventListener('change', async () => {
+      const n = Math.floor(Number(input.value));
+      const value = Number.isFinite(n) && n >= 0 ? Math.min(n, MAX_PROCESSING_DAYS) : DEFAULT_PROCESSING_DAYS;
+      input.value = value;
+      try {
+        await window.electron?.saveSetting?.('orderProcessingBusinessDays', String(value));
+      } catch (e) {
+        console.error('[OrdersPane] failed to save processing days', e);
+        return;
+      }
+      document.getElementById('orders-sync-now-btn')?.click();
+    });
+  }
+
+  // ============================================
   // React to a sync completing anywhere (manual button, interval watcher,
   // or another window) - badge + toast always; re-render the list only if
   // it's actually been opened this session, so a background sync in an
@@ -1036,6 +1113,7 @@
     registerPane();
     bindListEvents();
     bindSyncButton();
+    bindProcessingDaysInput();
     bindShowShippedToggle();
     bindOrdersSearchInput();
     bindSyncedEvent();

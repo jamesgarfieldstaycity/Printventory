@@ -30,6 +30,7 @@
     "test:bundle": "node bundle-keys.test.js",
     "test:print-events": "node print-events.test.js",
     "test:printers": "node printer-manager.test.js",
+    "test:ship-by": "node shopify-ship-by.test.js",
     "test:folder-tree": "node folder-tree-lib.test.js",
     "test:inbox": "node extension-inbox.test.js",
     "test:extractors": "node chrome-extension/extractors.test.js",

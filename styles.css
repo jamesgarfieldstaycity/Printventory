@@ -13469,6 +13469,60 @@ body.sidebar-pinned.filters-pane-pinned #orders-pane.pane-pinned {
   color: rgba(255, 255, 255, 0.4);
 }
 
+/* GR-PLAN-009 A1: ship-by line + due-soon / overdue badge */
+.order-ship-by {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.order-ship-by-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.order-ship-by-soon {
+  background: rgba(251, 191, 36, 0.18);
+  color: #fbbf24;
+}
+
+.order-ship-by-overdue {
+  background: rgba(248, 113, 113, 0.2);
+  color: #f87171;
+}
+
+/* Estimated (not from Shopify): muted so it reads as a guess, not a deadline */
+.order-ship-by-est {
+  color: rgba(255, 255, 255, 0.45);
+  font-style: italic;
+}
+
+.order-ship-by-est .order-ship-by-badge {
+  font-style: normal;
+  opacity: 0.6;
+}
+
+.orders-processing-days {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.orders-processing-days input[type="number"] {
+  width: 48px;
+  padding: 2px 4px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: #fff;
+}
+
 /* GR-PLAN-006 Option A card (approved wireframe): full-width title row,
    a separate metadata row (variant tag, SKU tag, qty x price), and a
    full-width action button below - replaces the earlier single flex row

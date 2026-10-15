@@ -4,6 +4,9 @@ All notable changes contributed via pull request are documented in this file.
 
 ## [Unreleased]
 
+- Order cards show a "Ship by" date with a "Due in Nd" / "Due today" badge when it is close and an "Overdue" badge once it has passed. Shopify's own ship-by is used when it has one; Etsy orders from QuickSync carry none, so those show an estimate ("Ship by ~Fri, Oct 24 (est.)", muted) of order date + N business days (Mon-Fri)
+- New "Est. ship-by: N business days after order" setting at the top of the Orders pane (default 3); changing it re-syncs to recompute estimates, and a real Shopify date replaces an estimate on the next sync
+
 ## [2.2.16] - 2026-10-15
 
 - Pinned Tools, Filters and Orders panes, and the folder rail, start clear of the edge tabs instead of having their headers clipped

@@ -20,7 +20,8 @@ Owner: James. Two people run the print shop; two Bambu Lab P1S printers (one sin
 - `main` at **v2.2.16** (commit `678333f`, tagged), installer built. Work continues on branch **`feature/production-planning`**.
 - Built and released in 2.2.16: edge-tab gutter for all panes (`--pane-gutter`), lazy-loaded product-editor photos, desktop notification for new orders, drag-to-reorder order queue (`shopify_orders.queue_position`), background order sync now reaches the window on desktop (`sendToMainWindow` fallback in `global.sendEvent`), order-line combobox alignment.
 - Ship / Shopify fulfillment push confirmed working on a real order.
-- **Next step: A1 — ship-by date** (see build order in GR-PLAN-009).
+- **A1 — ship-by date: done and committed on `feature/production-planning`** (see GR-PLAN-009 A1 status). Shopify's `fulfillBy` is null on all of James's orders (all are Etsy via QuickSync, which passes no ship date anywhere), so cards show an estimate = order date + N business days (setting `orderProcessingBusinessDays`, default 3, in the Orders pane), flagged via `shopify_orders.ship_by_source`. Not yet checked by James in-app (`npm start` / `start:server`). **Next step: A2** (Production menu + Printers window).
+- `npm run test:printers` / `test:print-events` fail under plain Node here (`better-sqlite3` built for Electron ABI 137, Node is 148) — environment issue, not a regression.
 
 ## Build order (summary — details in GR-PLAN-009)
 
