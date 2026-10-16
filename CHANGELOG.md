@@ -4,6 +4,8 @@ All notable changes contributed via pull request are documented in this file.
 
 ## [Unreleased]
 
+## [2.2.17] - 2026-10-16
+
 - Usage reporting is now off by default on new installs (existing choices are kept), and Printventory no longer contacts printventory.com for a version check at startup unless you turn on "Check for updates on startup". Both are in the About dialog, which also has a "Check for updates now" button that always works. Installs that never set the update-check option now default to off
 - Logs no longer contain Shopify credentials. Shopify tokens (shpat_, shpca_, shpss_) and access_token / client_secret values are redacted from the log files and from any logs you export, including older log files already on disk. The Shopify token request no longer writes its request or response body to the log
 - Help menu: "Open Log Folder" opens the logs folder (desktop) and "Download Logs" downloads the logs as a zip from the browser (server mode). "Send Logs" is replaced by "Save Logs…", which saves the zip where you choose and uploads nothing
