@@ -2431,12 +2431,29 @@
                 </div>
                 <div class="about-card-content">
                   <div class="about-option-item">
-                    <input type="checkbox" id="collect-usage" checked>
+                    <input type="checkbox" id="collect-usage">
                     <label for="collect-usage">Enable Usage Reporting</label>
                   </div>
                   <p class="about-card-description">
-                    Help improve Printventory by allowing collection of basic usage data. No personal information is collected.
+                    Off by default. Help improve Printventory by allowing collection of basic usage data. No personal information is collected.
                   </p>
+                </div>
+              </div>
+
+              <div class="about-section about-card">
+                <div class="about-card-header">
+                  <span class="card-icon">🔄</span>
+                  <h3>Updates</h3>
+                </div>
+                <div class="about-card-content">
+                  <div class="about-option-item">
+                    <input type="checkbox" id="check-updates-on-startup">
+                    <label for="check-updates-on-startup">Check for updates on startup</label>
+                  </div>
+                  <p class="about-card-description">
+                    Off by default. When enabled, Printventory contacts printventory.com at startup to look for a newer version.
+                  </p>
+                  <button type="button" id="check-updates-now" class="about-link">Check for updates now</button>
                 </div>
               </div>
             </div>

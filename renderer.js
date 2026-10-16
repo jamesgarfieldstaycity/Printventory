@@ -10015,6 +10015,32 @@ async function initializeAboutDialog() {
     console.error('About dialog CollectUsage:', e);
   }
 
+  // Updates: automatic check is opt-in; manual check always available
+  try {
+    const updatesCheckbox = document.getElementById('check-updates-on-startup');
+    if (updatesCheckbox && typeof window.electron?.getSetting === 'function') {
+      const enabled = await window.electron.getSetting('checkForUpdatesOnStartup').catch(() => null);
+      updatesCheckbox.checked = enabled === '1';
+      updatesCheckbox.onchange = async (e) => {
+        await window.electron.saveSetting('checkForUpdatesOnStartup', e.target.checked ? '1' : '0');
+      };
+    }
+    const updatesNowButton = document.getElementById('check-updates-now');
+    if (updatesNowButton) {
+      updatesNowButton.onclick = async () => {
+        if (typeof window.checkForUpdatesNow !== 'function') return;
+        updatesNowButton.disabled = true;
+        try {
+          await window.checkForUpdatesNow();
+        } finally {
+          updatesNowButton.disabled = false;
+        }
+      };
+    }
+  } catch (e) {
+    console.error('About dialog updates:', e);
+  }
+
   // Close X is handled by inline onclick in HTML; bind for any extra behavior
   bindAboutCloseButton();
 
@@ -15063,8 +15089,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       
       // Get latest version from web
-      const latestVersion = await window.electron.checkForUpdates(isBeta);
-      if (!latestVersion) return;
+      // Automatic (silent) checks are a no-op in main unless "Check for updates on startup" is enabled.
+      const latestVersion = await window.electron.checkForUpdates(isBeta, !silent);
+      if (!latestVersion) {
+        if (!silent) {
+          await window.electron.showMessage('Error', 'Could not reach printventory.com to check for updates. Please try again later.');
+        }
+        return;
+      }
 
       console.log('Version check result:', {
         currentVersion,
@@ -15129,6 +15161,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
   }
+
+  // Used by the About dialog's "Check for updates now" button (manual checks always run)
+  window.checkForUpdatesNow = () => checkForUpdates(false);
 
   // Remove any nested DOMContentLoaded listeners and consolidate into one
   document.addEventListener('DOMContentLoaded', async () => {

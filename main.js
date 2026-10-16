@@ -3442,7 +3442,12 @@ if (!gotTheLock) {
         createApplicationMenu();
 
         // Version check after first window paint (HTTPS can block for seconds)
+        // Off by default: only contacts printventory.com when the user has enabled it in About.
         setImmediate(() => {
+          if (!isAutomaticUpdateCheckEnabled()) {
+            console.log('[UpdateCheck] Automatic version check is disabled; skipping startup check');
+            return;
+          }
           checkForUpdates().catch((updateError) => {
             console.error('Error checking version on startup:', updateError);
           });
@@ -4075,7 +4080,8 @@ function initializeDefaultSettings() {
       { key: 'maxThumbnailSize', value: '300' },
       { key: 'maxConcurrentRenders', value: '3' },
       { key: 'lastVersionCheck', value: new Date().toISOString() },
-      { key: 'CollectUsage', value: '1' }, // Default to opt-in for analytics
+      { key: 'CollectUsage', value: '0' }, // Usage reporting is opt-in (new installs only; existing values are kept)
+      { key: 'checkForUpdatesOnStartup', value: '0' }, // Automatic printventory.com version check is opt-in; manual "Check for updates" still works
       { key: 'ClientId', value: crypto.randomUUID() }, // Generate a unique client ID
       { key: 'currentVersion', value: version }, // Use imported version from package.json
       { key: 'versionCheckPerformedOnStartup', value: 'false' }, // New setting for version check tracking
@@ -13527,11 +13533,22 @@ ipcMain.handle('delete-thumbnail', async (event, filePath, index) => {
 });
 
 // Update the checkForUpdates function to track user's response
-async function checkForUpdates(isBeta = false) {
+function isAutomaticUpdateCheckEnabled() {
+  try {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('checkForUpdatesOnStartup');
+    return !!row && row.value === '1';
+  } catch (error) {
+    console.error('[UpdateCheck] Could not read checkForUpdatesOnStartup:', error);
+    return false;
+  }
+}
+
+// manual = the user clicked "Check for updates now": bypasses the per-session flag and is not recorded as the startup check.
+async function checkForUpdates(isBeta = false, manual = false) {
   try {
     // First check if we've already shown update dialog this session
     const versionCheckPerformed = db.prepare('SELECT value FROM settings WHERE key = ?').get('versionCheckPerformedOnStartup');
-    if (versionCheckPerformed && versionCheckPerformed.value === 'true') {
+    if (!manual && versionCheckPerformed && versionCheckPerformed.value === 'true') {
       console.log('Version check already performed this session, skipping');
       return null;
     }
@@ -13557,7 +13574,9 @@ async function checkForUpdates(isBeta = false) {
               db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(version, 'latestVersion');
               db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(new Date().toISOString(), 'lastUpdateCheck');
               // Mark that we've performed the version check
-              db.prepare('UPDATE settings SET value = ? WHERE key = ?').run('true', 'versionCheckPerformedOnStartup');
+              if (!manual) {
+                db.prepare('UPDATE settings SET value = ? WHERE key = ?').run('true', 'versionCheckPerformedOnStartup');
+              }
               console.log('Database updated with latest version:', version);
             } catch (dbError) {
               console.error('Error updating version in database:', dbError);
@@ -13580,15 +13599,20 @@ async function checkForUpdates(isBeta = false) {
 }
 
 // Update the IPC handler
-ipcMain.handle('check-for-updates', async (event, isBeta) => {
+ipcMain.handle('check-for-updates', async (event, isBeta, manual) => {
   try {
-    console.log('Main Process - Update check requested:', { isBeta });
+    manual = manual === true;
+    if (!manual && !isAutomaticUpdateCheckEnabled()) {
+      // Automatic checks never touch the network unless the user enabled them.
+      return null;
+    }
+    console.log('Main Process - Update check requested:', { isBeta, manual });
     // Add timeout to the version check
     const timeoutPromise = new Promise((_, reject) => {
       setTimeout(() => reject(new Error('Version check timed out')), 5000);
     });
     
-    const versionPromise = checkForUpdates(isBeta);
+    const versionPromise = checkForUpdates(isBeta, manual);
     const latestVersion = await Promise.race([versionPromise, timeoutPromise]);
     
     console.log('Main Process - Latest version found:', latestVersion);

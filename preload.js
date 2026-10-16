@@ -337,7 +337,7 @@ contextBridge.exposeInMainWorld('electron', {
   onStartPrintRoulette: (callback) => {
     ipcRenderer.on('start-print-roulette', callback);
   },
-  checkForUpdates: (isBeta) => ipcRenderer.invoke('check-for-updates', isBeta),
+  checkForUpdates: (isBeta, manual) => ipcRenderer.invoke('check-for-updates', isBeta, manual),
   openUpdatePage: (isBeta) => ipcRenderer.invoke('open-update-page', isBeta),
   onOpenSTLHome: (callback) => ipcRenderer.on('open-stl-home', callback),
   send: (channel, ...args) => {
