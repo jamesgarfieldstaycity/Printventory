@@ -2334,12 +2334,15 @@ window.openModelFile = async function openModelFile(filePaths) {
 
   for (const filePath of paths) {
     if (!serverMode) {
+      // Main checks the file exists, handles zip entries/URL models and reports
+      // shell.openPath's returned error string (it resolves, it doesn't reject).
+      let desktopResult;
       try {
-        await window.electron.openPath(filePath);
+        desktopResult = await window.electron.executeClientCommand({ type: 'open-file', filePath });
       } catch (error) {
-        console.error('Error opening file:', error);
-        alert(`Failed to open file: ${error.message}`);
+        desktopResult = { success: false, error: (error && error.message) || String(error), path: filePath };
       }
+      if (!desktopResult || !desktopResult.success) await showOpenError(desktopResult, filePath);
       continue;
     }
 

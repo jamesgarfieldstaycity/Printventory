@@ -87,6 +87,17 @@ async function main() {
     assert.strictEqual(blockedExtension('C:\\x\\y.ps1'), '.ps1');
   });
 
+  await test('desktop Open File (renderer and native context menu) goes through the shared host-open path', () => {
+    const renderer = fs.readFileSync(path.join(__dirname, 'renderer.js'), 'utf8');
+    const main = fs.readFileSync(path.join(__dirname, 'main.js'), 'utf8');
+    const fn = renderer.slice(renderer.indexOf('window.openModelFile = async'));
+    const desktopBranch = fn.slice(0, fn.indexOf('let result = await openViaServer'));
+    assert.ok(desktopBranch.includes("executeClientCommand({ type: 'open-file'"));
+    assert.strictEqual(desktopBranch.includes('electron.openPath('), false, 'desktop must not call the unchecked open-path IPC');
+    assert.ok(/openPathsOnHost\(filePaths\.slice\(\)/.test(main), 'context menu must use openPathsOnHost');
+    assert.strictEqual(/await shell\.openPath\(filePath\)/.test(main), false, 'no unchecked shell.openPath(filePath) left');
+  });
+
   fs.rmSync(dir, { recursive: true, force: true });
 }
 

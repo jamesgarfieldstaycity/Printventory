@@ -9784,13 +9784,17 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
           return;
         }
 
-        if (isZipEntry && pathInfo) {
-          const tempPath = await extractModelFromZip(pathInfo.zipPath, pathInfo.entryPath);
-          await shell.openPath(tempPath);
-          scheduleExtractTempCleanup(tempPath);
-        } else {
-          for (const filePath of filePaths) {
-            await shell.openPath(filePath);
+        // Desktop: same exists-check / openPath error handling as the renderer's Open File.
+        const result = await openPathsOnHost(filePaths.slice(), 'client=local target=host (context menu)');
+        if (!result.success) {
+          const win = getWindowFromEvent(event);
+          if (win && !win.isDestroyed()) {
+            safeShowMessageBox(win, {
+              type: 'error',
+              title: 'Open File',
+              message: 'Could not open file',
+              detail: `${result.path}\n\n${result.error}`
+            });
           }
         }
       } catch (error) {
@@ -14243,6 +14247,41 @@ const getFileStatsHandler = async (event, filePath) => {
 ipcMain.handle('get-file-stats', getFileStatsHandler);
 ipcHandlerRegistry.set('get-file-stats', getFileStatsHandler);
 
+// Open model path(s) with the OS default application on the machine running Printventory.
+// Shared by the execute-client-command handler (renderer "Open File", desktop and server)
+// and the desktop native context menu. Never throws: returns { success, path, error?, results }.
+async function openPathsOnHost(paths, context) {
+  const results = [];
+  for (const p of paths) {
+    try {
+      if (isUrlModel(p)) {
+        await shell.openExternal(p.slice(5));
+        console.log(`[OpenFile] ${context} OK url="${p.slice(5)}"`);
+        results.push({ success: true, path: p });
+        continue;
+      }
+      if (isServerMode) validateUncPath(p, 'open-file');
+      const info = parseZipPath(p);
+      if (info.isZipEntry) {
+        const tempPath = await extractModelFromZip(info.zipPath, info.entryPath);
+        const res = await openFileCore.openFileOnHost(tempPath, { shell, fs, log: console.log, context });
+        if (res.success) scheduleExtractTempCleanup(tempPath);
+        results.push({ ...res, path: p });
+      } else {
+        results.push(await openFileCore.openFileOnHost(p, { shell, fs, log: console.log, context }));
+      }
+    } catch (err) {
+      const message = (err && err.message) || String(err);
+      console.error(`[OpenFile] FAILED ${context} path="${p}" error="${message}"`);
+      results.push({ success: false, error: message, path: p });
+    }
+  }
+  const firstFailure = results.find(r => !r.success);
+  return firstFailure
+    ? { success: false, error: firstFailure.error, path: firstFailure.path, results }
+    : { success: true, path: results[0].path, results };
+}
+
 // IPC handler for executing commands on client machine (for server mode Electron clients)
 // Note: In server mode, browser clients receive this as an event and handle it in renderer.js
 const executeClientCommandHandler = async (event, commandData) => {
@@ -14279,35 +14318,7 @@ const executeClientCommandHandler = async (event, commandData) => {
         };
       }
 
-      const results = [];
-      for (const p of paths) {
-        try {
-          if (isUrlModel(p)) {
-            await shell.openExternal(p.slice(5));
-            console.log(`[OpenFile] ${context} OK url="${p.slice(5)}"`);
-            results.push({ success: true, path: p });
-            continue;
-          }
-          if (isServerMode) validateUncPath(p, 'open-file');
-          const info = parseZipPath(p);
-          if (info.isZipEntry) {
-            const tempPath = await extractModelFromZip(info.zipPath, info.entryPath);
-            const res = await openFileCore.openFileOnHost(tempPath, { shell, fs, log: console.log, context });
-            if (res.success) scheduleExtractTempCleanup(tempPath);
-            results.push({ ...res, path: p });
-          } else {
-            results.push(await openFileCore.openFileOnHost(p, { shell, fs, log: console.log, context }));
-          }
-        } catch (err) {
-          const message = (err && err.message) || String(err);
-          console.error(`[OpenFile] FAILED ${context} path="${p}" error="${message}"`);
-          results.push({ success: false, error: message, path: p });
-        }
-      }
-      const firstFailure = results.find(r => !r.success);
-      return firstFailure
-        ? { success: false, error: firstFailure.error, path: firstFailure.path, results }
-        : { success: true, path: results[0].path, results };
+      return openPathsOnHost(paths, context);
     }
 
     return { success: false, error: 'Unknown command type' };
