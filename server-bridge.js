@@ -841,38 +841,10 @@
     window.electron.on('open-stl-home', callback);
   };
   
-  // Handle client-side command execution (for server mode). "open-file"
-  // downloads the model so this browser's own OS opens it with its default
-  // application (replaces the old per-server "Open in Slicer" flow).
-  window.electron.on('execute-client-command', async (commandData) => {
-    try {
-      if (!commandData || !commandData.type) {
-        console.error('[Bridge] Invalid command data:', commandData);
-        return;
-      }
+  // 'execute-client-command' events (context-menu "Open File") are handled in
+  // renderer.js, which routes through window.openModelFile so failures are shown
+  // and remote browsers get the Open-on-server / Download-a-copy choice.
 
-      const { type, filePath, filePaths } = commandData;
-
-      if (type === 'open-file') {
-        const paths = Array.isArray(filePaths) && filePaths.length ? filePaths : (filePath ? [filePath] : []);
-        paths.forEach((p) => {
-          console.log('[Bridge] Open file requested:', p);
-          const encodedPath = encodeURIComponent(p);
-          const downloadUrl = `/api/download/${encodedPath}`;
-          const link = document.createElement('a');
-          link.href = downloadUrl;
-          link.download = '';
-          link.style.display = 'none';
-          document.body.appendChild(link);
-          link.click();
-          setTimeout(() => link.remove(), 100);
-        });
-      }
-    } catch (error) {
-      console.error('[Bridge] Error handling client command:', error);
-    }
-  });
-  
   window.electron.onOpenPurgeModels = function(callback) {
     window.electron.on('open-purge-models', callback);
   };

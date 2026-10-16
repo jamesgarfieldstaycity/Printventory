@@ -4,6 +4,7 @@ All notable changes contributed via pull request are documented in this file.
 
 ## [Unreleased]
 
+- Open File in server mode no longer reports success when nothing opened. The server checks the file exists and returns the error from the operating system if it can't be opened, and the browser shows it. A browser running on the server PC itself (127.0.0.1 / ::1) opens the file directly; any other browser is asked to choose "Open on server PC" or "Download a copy (not the original)". The context-menu Open File now acts only for the browser that clicked it, and every attempt is written to the log. Executable and script file types are never opened
 - Order cards show a "Ship by" date with a "Due in Nd" / "Due today" badge when it is close and an "Overdue" badge once it has passed. Shopify's own ship-by is used when it has one; Etsy orders from QuickSync carry none, so those show an estimate ("Ship by ~Fri, Oct 24 (est.)", muted) of order date + N business days (Mon-Fri)
 - New "Est. ship-by: N business days after order" setting at the top of the Orders pane (default 3); changing it re-syncs to recompute estimates, and a real Shopify date replaces an estimate on the next sync
 - Click the "Ship by" line on an order card to set a manual ship-by date (date picker, Save / Cancel), or "Clear override" to go back to the automatic one. A manual date is shown without "(est.)", is local only (never sent to Shopify), and is never replaced by a sync or the estimate. Precedence: manual > Shopify fulfillBy > estimate. Works in desktop and server mode

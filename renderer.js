@@ -2288,16 +2288,49 @@ function initShopifyTagCounters() {
 }
 
 /**
- * Opens a model file with this computer's own OS default application for its
- * extension. Works the same in desktop and server mode: in server mode this
- * always acts on the browser/workstation currently viewing the page, never on
- * the Printventory server itself (replaces the old "Open in Slicer" flow).
+ * Opens a model file with the OS default application for its extension.
+ *
+ * Desktop: opens on this PC.
+ * Server mode: the server decides. A browser on the server PC itself (127.0.0.1/::1)
+ * opens the file directly there. Any other browser is asked to choose between
+ * "Open on server PC" and "Download a copy" (a copy - edits don't touch the original).
+ * A failure (missing file, no associated app, ...) is shown to the user, never swallowed.
  */
 window.openModelFile = async function openModelFile(filePaths) {
   const paths = (Array.isArray(filePaths) ? filePaths : [filePaths]).filter(Boolean);
   if (!paths.length) return;
 
   const serverMode = await window.electron?.isServerMode?.().catch(() => false);
+
+  const showOpenError = async (result, filePath) => {
+    const reason = (result && result.error) || 'Unknown error';
+    const failedPath = (result && result.path) || filePath;
+    console.error('Open file failed:', failedPath, reason);
+    const text = `Could not open file:\n${failedPath}\n\n${reason}`;
+    if (typeof window.electron?.showMessage === 'function') {
+      await window.electron.showMessage('Open File', text, ['OK']);
+    } else {
+      alert(text);
+    }
+  };
+
+  const downloadCopy = (filePath) => {
+    const link = document.createElement('a');
+    link.href = `/api/download/${encodeURIComponent(filePath)}`;
+    link.download = '';
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => link.remove(), 100);
+  };
+
+  const openViaServer = async (filePath, target) => {
+    try {
+      return await window.electron.invoke('execute-client-command', { type: 'open-file', filePath, target });
+    } catch (error) {
+      return { success: false, error: (error && error.message) || String(error), path: filePath };
+    }
+  };
 
   for (const filePath of paths) {
     if (!serverMode) {
@@ -2310,25 +2343,28 @@ window.openModelFile = async function openModelFile(filePaths) {
       continue;
     }
 
-    // Server mode: act locally on this client, never ask the server to open it.
-    try {
-      if (window.electron && typeof window.electron.invoke === 'function') {
-        const result = await window.electron.invoke('execute-client-command', { type: 'open-file', filePath });
-        if (result && result.success) continue;
+    let result = await openViaServer(filePath);
+    if (result && result.success) continue;
+
+    if (result && result.needsChoice) {
+      const choice = await window.electron.showMessage(
+        'Open File',
+        `${filePath}\n\nThis browser is not on the server PC, so the file cannot be opened here directly.\n\n` +
+          '- Download a copy: saves a copy to this computer. It is not the original - changes you make to it will not update the library.\n' +
+          '- Open on server PC: opens the original on the PC running Printventory.',
+        ['Download a copy (not the original)', 'Open on server PC', 'Cancel']
+      );
+      if (choice === 'Download a copy (not the original)') {
+        console.log('[OpenFile] downloading copy:', filePath);
+        downloadCopy(filePath);
+      } else if (choice === 'Open on server PC') {
+        result = await openViaServer(filePath, 'server');
+        if (!result || !result.success) await showOpenError(result, filePath);
       }
-    } catch (ipcError) {
-      console.log('IPC handler not available, falling back to download:', ipcError);
+      continue;
     }
 
-    // Plain browser client: trigger a download so the OS/browser opens it with its own default app.
-    const encodedPath = encodeURIComponent(filePath);
-    const link = document.createElement('a');
-    link.href = `/api/download/${encodedPath}`;
-    link.download = '';
-    link.style.display = 'none';
-    document.body.appendChild(link);
-    link.click();
-    setTimeout(() => link.remove(), 100);
+    await showOpenError(result, filePath);
   }
 };
 
@@ -17750,50 +17786,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
       }
 
-      const { type, filePath, filePaths, isZipEntry, zipPath, entryPath } = commandData;
+      const { type, filePath, filePaths } = commandData;
 
       if (type === 'open-file') {
+        // Same path as every other Open button: the server decides (local client opens
+        // directly, remote client is offered Open on server PC / Download a copy) and
+        // any failure is shown here.
         const paths = Array.isArray(filePaths) && filePaths.length ? filePaths : (filePath ? [filePath] : []);
-
-        const downloadFallback = (p) => {
-          const encodedPath = encodeURIComponent(p);
-          const downloadUrl = `/api/download/${encodedPath}`;
-          const link = document.createElement('a');
-          link.href = downloadUrl;
-          link.download = '';
-          link.style.display = 'none';
-          document.body.appendChild(link);
-          link.click();
-          setTimeout(() => link.remove(), 100);
-        };
-
-        for (const p of paths) {
-          try {
-            // Try IPC handler first (works for Electron clients)
-            if (window.electron && typeof window.electron.invoke === 'function') {
-              try {
-                const result = await window.electron.invoke('execute-client-command', { type: 'open-file', filePath: p, isZipEntry, zipPath, entryPath });
-                if (result && result.success) {
-                  console.log('File opened successfully via IPC');
-                  continue;
-                }
-              } catch (ipcError) {
-                console.log('IPC handler not available, trying direct method:', ipcError);
-              }
-            }
-
-            // Try direct openPath (works for Electron clients with preload)
-            if (window.electron && typeof window.electron.openPath === 'function') {
-              await window.electron.openPath(p);
-            } else {
-              // Browser context - trigger download so the OS/browser opens it with its own default app
-              downloadFallback(p);
-            }
-          } catch (error) {
-            console.error('Error opening file:', error);
-            downloadFallback(p);
-          }
-        }
+        await window.openModelFile(paths);
       }
     } catch (error) {
       console.error('Error handling client command:', error);

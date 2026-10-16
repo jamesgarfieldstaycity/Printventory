@@ -16,6 +16,7 @@ const { ensureShopifyTablesExist } = require('./core/schema');
 const shopifyCatalog = require('./core/shopify-catalog');
 const shopifyOrders = require('./core/shopify-orders');
 const shopifyReconciliation = require('./core/shopify-reconciliation');
+const openFileCore = require('./core/open-file');
 const {
   registerMcpRoutes,
   buildMcpClientConfig,
@@ -1278,8 +1279,13 @@ ${bridgeCode}
   const pendingRequests = new Map();
   wsClients = new Set(); // Track all connected clients
 
-  wss.on('connection', (ws) => {
-    console.log('WebSocket client connected');
+  wss.on('connection', (ws, req) => {
+    // Remote address of this browser/client as seen by the server. Used to decide whether
+    // a client is on the server PC itself (loopback) - never derived from headers, which
+    // a client could spoof.
+    const clientAddress = (req && req.socket && req.socket.remoteAddress) || null;
+    ws.clientAddress = clientAddress;
+    console.log(`WebSocket client connected${clientAddress ? ` from ${clientAddress}` : ''}`);
     wsClients.add(ws);
 
     // Bound concurrent IPC work per client. Unbounded Promise.all-style floods
@@ -1421,7 +1427,8 @@ ${bridgeCode}
               }
             },
             // Add wsClient for server mode so createPuterIPCHandler can use it
-            wsClient: isServerMode ? ws : null
+            wsClient: isServerMode ? ws : null,
+            clientAddress
           };
           
           // Check if handler exists in registry (for direct invocation)
@@ -9710,7 +9717,15 @@ ipcMain.handle('show-context-menu', async (event, fileIdentifier) => {
             zipPath: isZipEntry && pathInfo ? pathInfo.zipPath : null,
             entryPath: isZipEntry && pathInfo ? pathInfo.entryPath : null
           };
-          if (global.broadcastEvent) {
+          // Send to the browser that clicked, not every connected client - otherwise each
+          // open browser would try to open the file.
+          if (event && event.wsClient && typeof event.wsClient.send === 'function') {
+            event.wsClient.send(jsonStringifyForWs({
+              type: 'event',
+              channel: 'execute-client-command',
+              args: [payload]
+            }));
+          } else if (global.broadcastEvent) {
             global.broadcastEvent('execute-client-command', payload);
           } else {
             event.sender.send('execute-client-command', payload);
@@ -14167,20 +14182,63 @@ const executeClientCommandHandler = async (event, commandData) => {
       throw new Error('Invalid command data');
     }
 
-    const { type, filePath, filePaths, isZipEntry, zipPath, entryPath } = commandData;
+    const { type, filePath, filePaths, target } = commandData;
 
     if (type === 'open-file') {
-      // Open file(s) with the system's default application for their extension.
-      if (isZipEntry && zipPath && entryPath) {
-        // For zip entries, open the zip file
-        await shell.openPath(zipPath);
-      } else {
-        const paths = Array.isArray(filePaths) && filePaths.length ? filePaths : (filePath ? [filePath] : []);
-        for (const p of paths) {
-          await shell.openPath(p);
+      // Open file(s) with the default application ON THE MACHINE RUNNING Printventory.
+      // Desktop: that is the user's own PC. Server mode: only loopback clients (a browser
+      // on the server PC) open directly; a remote browser gets { needsChoice: true } and
+      // the page offers "Open on server PC" (re-sent with target:'server') or
+      // "Download a copy". Every attempt is logged; failures are returned, not thrown.
+      const paths = Array.isArray(filePaths) && filePaths.length ? filePaths : (filePath ? [filePath] : []);
+      const clientAddress = (event && (event.clientAddress || (event.wsClient && event.wsClient.clientAddress))) || null;
+      const where = openFileCore.resolveOpenTarget({ isServerMode, clientAddress, requestedTarget: target });
+      const context = `client=${clientAddress || 'local'} target=${where === 'host' ? 'host' : 'choice'}`;
+
+      if (!paths.length) {
+        console.warn(`[OpenFile] FAILED no path provided ${context}`);
+        return { success: false, error: 'No file path was provided.', path: null };
+      }
+
+      if (where === 'choice') {
+        console.log(`[OpenFile] ${context} remote client, awaiting choice path="${paths[0]}"`);
+        return {
+          success: false,
+          needsChoice: true,
+          error: 'This browser is not on the server PC.',
+          path: paths[0]
+        };
+      }
+
+      const results = [];
+      for (const p of paths) {
+        try {
+          if (isUrlModel(p)) {
+            await shell.openExternal(p.slice(5));
+            console.log(`[OpenFile] ${context} OK url="${p.slice(5)}"`);
+            results.push({ success: true, path: p });
+            continue;
+          }
+          if (isServerMode) validateUncPath(p, 'open-file');
+          const info = parseZipPath(p);
+          if (info.isZipEntry) {
+            const tempPath = await extractModelFromZip(info.zipPath, info.entryPath);
+            const res = await openFileCore.openFileOnHost(tempPath, { shell, fs, log: console.log, context });
+            if (res.success) scheduleExtractTempCleanup(tempPath);
+            results.push({ ...res, path: p });
+          } else {
+            results.push(await openFileCore.openFileOnHost(p, { shell, fs, log: console.log, context }));
+          }
+        } catch (err) {
+          const message = (err && err.message) || String(err);
+          console.error(`[OpenFile] FAILED ${context} path="${p}" error="${message}"`);
+          results.push({ success: false, error: message, path: p });
         }
       }
-      return { success: true };
+      const firstFailure = results.find(r => !r.success);
+      return firstFailure
+        ? { success: false, error: firstFailure.error, path: firstFailure.path, results }
+        : { success: true, path: results[0].path, results };
     }
 
     return { success: false, error: 'Unknown command type' };
