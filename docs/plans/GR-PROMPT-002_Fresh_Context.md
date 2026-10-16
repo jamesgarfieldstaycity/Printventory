@@ -15,13 +15,20 @@ Owner: James. Two people run the print shop; two Bambu Lab P1S printers (one sin
 3. `docs/plans/GR-PLAN-006_Order_Fulfillment_Workflow_Plan.md` — how the Orders pane, sync, matching and Ship work today (long; skim "Decisions" and the 2026-10-15 decision log).
 4. `docs/plans/GR-PLAN-007_...` — why desktop/server drift happens and the guardrails below.
 
-## Current state (2026-10-15)
+## Current state (2026-10-16)
 
 - `main` at **v2.2.16** (commit `678333f`, tagged), installer built. Work continues on branch **`feature/production-planning`**.
 - Built and released in 2.2.16: edge-tab gutter for all panes (`--pane-gutter`), lazy-loaded product-editor photos, desktop notification for new orders, drag-to-reorder order queue (`shopify_orders.queue_position`), background order sync now reaches the window on desktop (`sendToMainWindow` fallback in `global.sendEvent`), order-line combobox alignment.
 - Ship / Shopify fulfillment push confirmed working on a real order.
 - **A1 — ship-by date: done and committed on `feature/production-planning`** (see GR-PLAN-009 A1 status). Shopify's `fulfillBy` is null on all of James's orders (all are Etsy via QuickSync, which passes no ship date anywhere), so cards show an estimate = order date + N business days (setting `orderProcessingBusinessDays`, default 3, in the Orders pane), flagged via `shopify_orders.ship_by_source`. Also has a manual override (click the Ship-by line; precedence manual > Shopify > estimate; `ship_by_auto*` columns hold the automatic value so Clear override works offline). Not yet checked by James in-app (`npm start` / `start:server`). **Next step: A2** (Production menu + Printers window).
-- `npm run test:printers` / `test:print-events` fail under plain Node here (`better-sqlite3` built for Electron ABI 137, Node is 148) — environment issue, not a regression.
+- **Maintenance batch done before A2 (each its own commit on `feature/production-planning`):**
+  - `3a7988c` Open File in server mode: new `core/open-file.js`; checks the file exists and reports `shell.openPath`'s returned error (`{success:false,error,path}`); opens on the server PC only for loopback clients (127.0.0.1 / ::1, from the socket address), otherwise the browser offers "Open on server PC" or "Download a copy"; every attempt logged `[OpenFile]`; executable/script types never opened on the host. Desktop `open-path` IPC is unchanged (still returns true regardless).
+  - `ddbaca9` Logging: Shopify tokens and `access_token`/`client_secret` redacted (at write time and again on export); `shopify.js` no longer logs token request/response bodies; Help → Open Log Folder (desktop), Download Logs (server mode, `GET /api/support-logs.zip`), Save Logs… replaces the Discord Send Logs. Older raw log files on disk may still hold tokens; exports are re-redacted, "Open Log Folder" shows raw files.
+  - `7e3de93` Privacy defaults: `CollectUsage` defaults to 0 for new installs; startup printventory.com version check gated by new setting `checkForUpdatesOnStartup` (default 0); both toggles plus "Check for updates now" in the About dialog (`check-for-updates` IPC takes a `manual` flag). Existing installs keep their stored `CollectUsage`; `checkForUpdatesOnStartup` is absent there until defaults insert it as 0.
+  - `67a36d2` `npm run test:printers` / `test:print-events` now run through `scripts/run-electron-node.js` (ELECTRON_RUN_AS_NODE) and pass (8/8 and all print-events). `shopify.test.js` also fails under plain Node (sqlite ABI) and still needs `node scripts/run-electron-node.js shopify.test.js`; it has no npm script.
+  - `1353e8b` Committed GR-PLAN-010 (Gremlin Works rebrand plan).
+  - New unit tests: `test:open-file`, `test:shopify-token-logging`, `test:privacy-defaults`; `test:support-logs` rewritten.
+  - Not yet checked in-app in both `npm start` and `npm run start:server`.
 
 ## Build order (summary — details in GR-PLAN-009)
 
