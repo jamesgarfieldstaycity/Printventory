@@ -3,23 +3,28 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const https = require('https');
 const util = require('util');
-const crypto = require('crypto');
 
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
 const TAIL_BYTES = 2 * 1024 * 1024;
-const MAX_ZIP_BYTES = 8 * 1024 * 1024;
 const MAX_BUFFER_BYTES = 2 * 1024 * 1024;
 const MAX_LINE_CHARS = 8000;
 
 const INSPECT_OPTIONS = { depth: 3, maxArrayLength: 20, maxStringLength: 2000, breakLength: 160 };
 
+// Field names whose value is a credential, in JSON ("k":"v"), JS inspect (k: 'v'),
+// form-encoded (k=v) or header (K: v) form. The optional \\? before quotes covers JSON
+// that has itself been embedded in a JSON string (an error message holding a response).
+const SECRET_FIELD_RE = /((?:\\?["'])?\b(?:x-shopify-access-token|access_token|client_secret|refresh_token)(?:\\?["'])?\s*[:=]\s*)(\\?["']?)[^"'\s&,}\\]+/gi;
+
 function redactLogText(text) {
   return String(text)
     .replace(/https:\/\/(?:discord\.com|discordapp\.com)\/api\/webhooks\/\d+\/[\w-]+/gi, '[discord-webhook]')
     .replace(/\bsk-[A-Za-z0-9_-]{10,}\b/g, '[api-key]')
-    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [redacted]');
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [redacted]')
+    // Shopify Admin API tokens: shpat_ (access), shpca_ (custom app), shpss_ (shared secret), shppa_ (private app)
+    .replace(/\bshp(?:at|ca|ss|pa)_[A-Za-z0-9]+/gi, '[shopify-token]')
+    .replace(SECRET_FIELD_RE, '$1$2[redacted]');
 }
 
 function clampLine(text) {
@@ -68,71 +73,9 @@ function readLogTail(filePath, maxBytes = TAIL_BYTES) {
   }
 }
 
-function buildDiscordMultipart({ payload, filename, fileBuffer, boundary }) {
-  const chunks = [];
-  const push = (value) => chunks.push(Buffer.isBuffer(value) ? value : Buffer.from(value, 'utf8'));
-  push(`--${boundary}\r\nContent-Disposition: form-data; name="payload_json"\r\n\r\n${payload}\r\n`);
-  push(`--${boundary}\r\nContent-Disposition: form-data; name="files[0]"; filename="${filename}"\r\nContent-Type: application/zip\r\n\r\n`);
-  push(fileBuffer);
-  push(`\r\n--${boundary}--\r\n`);
-  return Buffer.concat(chunks);
-}
-
-function resolveDiscordWebhookUrl(webhookUrl = process.env.DISCORD_WEBHOOK_URL) {
-  if (!webhookUrl) {
-    throw new Error('Discord support webhook is not configured.');
-  }
-  let url;
-  try {
-    url = new URL(webhookUrl);
-  } catch (_) {
-    throw new Error('Discord support webhook is invalid.');
-  }
-  const isDiscord = url.protocol === 'https:' &&
-    (url.hostname === 'discord.com' || url.hostname === 'discordapp.com') &&
-    /^\/api\/webhooks\/\d+\/[\w-]+$/.test(url.pathname);
-  if (!isDiscord) {
-    throw new Error('Discord support webhook is invalid.');
-  }
-  return url.toString();
-}
-
-function postDiscordWebhook(webhookUrl, { filename, fileBuffer, content }) {
-  const url = new URL(resolveDiscordWebhookUrl(webhookUrl));
-  const boundary = `----PrintventoryLogs${crypto.randomBytes(12).toString('hex')}`;
-  const payload = JSON.stringify({ content: String(content || '').slice(0, 2000) });
-  const body = buildDiscordMultipart({ payload, filename, fileBuffer, boundary });
-
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      method: 'POST',
-      hostname: url.hostname,
-      path: `${url.pathname}${url.search}`,
-      headers: {
-        'Content-Type': `multipart/form-data; boundary=${boundary}`,
-        'Content-Length': body.length,
-        'User-Agent': 'Printventory'
-      }
-    }, (res) => {
-      const parts = [];
-      res.on('data', (chunk) => parts.push(chunk));
-      res.on('end', () => {
-        const responseBody = Buffer.concat(parts).toString('utf8');
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          resolve({ statusCode: res.statusCode, body: responseBody });
-          return;
-        }
-        const detail = redactLogText(responseBody).slice(0, 300);
-        reject(new Error(`Discord returned ${res.statusCode}${detail ? `: ${detail}` : ''}`));
-      });
-    });
-    req.setTimeout(60000, () => {
-      req.destroy(new Error('Timed out sending logs to Discord'));
-    });
-    req.on('error', (error) => reject(error));
-    req.write(body);
-    req.end();
-  });
+function logsZipFilename(date = new Date()) {
+  const stamp = date.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+  return `printventory-logs-${stamp}.zip`;
 }
 
 function createCapture(options = {}) {
@@ -153,7 +96,7 @@ function createCapture(options = {}) {
     consoleRotating: false,
     appPending: null,
     consolePending: null,
-    sending: false,
+    saving: false,
     attached: new WeakSet()
   };
 
@@ -325,16 +268,18 @@ function createCapture(options = {}) {
   async function createLogsZip(version, tailBytes = TAIL_BYTES) {
     const JSZip = require('jszip');
     await Promise.all([flushStream(state.appStream), flushStream(state.consoleStream)]);
-    const appLog = [
+    // Redact again on the way out: lines are redacted as they are written, but log files
+    // from earlier versions on disk were not (they can hold Shopify tokens).
+    const appLog = redactLogText([
       readLogTail(state.appPath ? `${state.appPath}.1` : '', tailBytes),
       readLogTail(state.appPath, tailBytes),
       state.appBuffer.join('')
-    ].filter(Boolean).join('');
-    const consoleLog = [
+    ].filter(Boolean).join(''));
+    const consoleLog = redactLogText([
       readLogTail(state.consolePath ? `${state.consolePath}.1` : '', tailBytes),
       readLogTail(state.consolePath, tailBytes),
       state.consoleBuffer.join('')
-    ].filter(Boolean).join('');
+    ].filter(Boolean).join(''));
     const system = [
       `Printventory ${version || 'unknown'}`,
       `Electron ${process.versions.electron || 'unknown'}`,
@@ -351,55 +296,43 @@ function createCapture(options = {}) {
     return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
   }
 
-  async function confirmAndSend({ dialog, parentWindow, version } = {}) {
-    if (state.sending) return { sent: false };
-    state.sending = true;
+  // Desktop "Save Logs...": zip the (redacted) logs and write them wherever the user
+  // chooses. Nothing is uploaded; the user decides who, if anyone, receives the file.
+  async function saveLogs({ dialog, parentWindow, version, defaultDirectory } = {}) {
+    if (state.saving) return { saved: false };
+    state.saving = true;
     const parent = parentWindow && !parentWindow.isDestroyed?.() ? parentWindow : undefined;
     try {
-      const choice = await dialog.showMessageBox(parent, {
-        type: 'question',
-        buttons: ['Send Logs', 'Cancel'],
-        defaultId: 0,
-        cancelId: 1,
-        title: 'Send Logs',
-        message: 'This will send the Printventory logs to the support team on Discord.',
-        detail: 'Console logs and app logs will be zipped and uploaded.'
+      const filename = logsZipFilename();
+      const choice = await dialog.showSaveDialog(parent, {
+        title: 'Save Logs',
+        defaultPath: defaultDirectory ? path.join(defaultDirectory, filename) : filename,
+        filters: [{ name: 'Zip archive', extensions: ['zip'] }]
       });
-      if (choice.response !== 0) return { sent: false };
+      if (!choice || choice.canceled || !choice.filePath) return { saved: false };
 
-      let zipBuffer = await createLogsZip(version, TAIL_BYTES);
-      if (zipBuffer.length > MAX_ZIP_BYTES) {
-        zipBuffer = await createLogsZip(version, 256 * 1024);
-      }
-      const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-      const filename = `printventory-logs-${stamp}.zip`;
-      const content = [
-        'Printventory support logs',
-        `Version: ${version || 'unknown'}`,
-        `Platform: ${process.platform} ${process.arch} (${os.release()})`,
-        `Sent: ${new Date().toISOString()}`
-      ].join('\n');
-      const post = options.postZip || ((file) => postDiscordWebhook(resolveDiscordWebhookUrl(options.webhookUrl), file));
-      await post({ filename, fileBuffer: zipBuffer, content });
+      const zipBuffer = await createLogsZip(version, TAIL_BYTES);
+      await fs.promises.writeFile(choice.filePath, zipBuffer);
       await dialog.showMessageBox(parent, {
         type: 'info',
-        title: 'Send Logs',
-        message: 'Printventory logs were sent to the support team on Discord.'
+        title: 'Save Logs',
+        message: 'Printventory logs were saved.',
+        detail: `${choice.filePath}\n\nPasswords and API tokens are removed from the logs, but check the file before sharing it.`
       });
-      return { sent: true };
+      return { saved: true, filePath: choice.filePath };
     } catch (error) {
       const detail = redactLogText(error && error.message ? error.message : String(error)).slice(0, 500);
       if (dialog && dialog.showMessageBox) {
         await dialog.showMessageBox(parent, {
           type: 'error',
-          title: 'Send Logs',
-          message: 'Could not send Printventory logs.',
+          title: 'Save Logs',
+          message: 'Could not save Printventory logs.',
           detail
         });
       }
-      return { sent: false, error: detail };
+      return { saved: false, error: detail };
     } finally {
-      state.sending = false;
+      state.saving = false;
     }
   }
 
@@ -410,7 +343,7 @@ function createCapture(options = {}) {
     appendApp,
     appendConsole,
     createLogsZip,
-    confirmAndSend
+    saveLogs
   };
 }
 
@@ -419,6 +352,5 @@ module.exports = {
   redactLogText,
   readLogTail,
   formatLogLine,
-  buildDiscordMultipart,
-  resolveDiscordWebhookUrl
+  logsZipFilename
 };

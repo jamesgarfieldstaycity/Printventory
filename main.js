@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, screen, dialog, Menu, shell, contextBridge,
 const fs = require('fs');
 const path = require('path');
 const supportLogs = require('./support-logs').createCapture();
+const supportLogsFilename = require('./support-logs').logsZipFilename;
 supportLogs.beginCapture();
 const Database = require('better-sqlite3');
 const crypto = require('crypto');
@@ -1021,6 +1022,25 @@ ${bridgeCode}
     } catch (error) {
       console.error('Error in file serving endpoint:', error);
       res.status(500).send('Error serving file');
+    }
+  });
+
+  // Help > Download Logs (server mode): redacted app + console logs as a zip, saved by the browser.
+  expressApp.get('/api/support-logs.zip', async (req, res) => {
+    try {
+      const filename = supportLogsFilename();
+      console.log(`[Logs] Download requested by ${req.socket && req.socket.remoteAddress || 'unknown'} as ${filename}`);
+      const zipBuffer = await supportLogs.createLogsZip(version);
+      res.set({
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Content-Length': zipBuffer.length,
+        'Cache-Control': 'no-store'
+      });
+      res.send(zipBuffer);
+    } catch (error) {
+      console.error('[Logs] Could not build logs zip:', error);
+      res.status(500).send('Could not build logs zip');
     }
   });
 
@@ -4108,13 +4128,32 @@ function initializeDefaultSettings() {
   }
 }
 
-function sendSupportLogsFromMenu() {
+function saveSupportLogsFromMenu() {
   const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-  return supportLogs.confirmAndSend({
+  return supportLogs.saveLogs({
     dialog,
     parentWindow: parent,
-    version
+    version,
+    defaultDirectory: app.getPath('documents')
   });
+}
+
+async function openLogFolderFromMenu() {
+  const logDir = app.getPath('logs');
+  try {
+    fs.mkdirSync(logDir, { recursive: true });
+  } catch (_) { /* openPath reports the real problem */ }
+  const openError = await shell.openPath(logDir);
+  if (openError) {
+    console.error(`[Logs] Could not open log folder "${logDir}": ${openError}`);
+    const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+    await dialog.showMessageBox(parent, {
+      type: 'error',
+      title: 'Open Log Folder',
+      message: 'Could not open the log folder.',
+      detail: `${logDir}\n\n${openError}`
+    });
+  }
 }
 
 async function createWindow() {
@@ -4556,9 +4595,15 @@ function createApplicationMenu() {
           }
         },
         {
-          label: 'Send Logs',
+          label: 'Open Log Folder',
           click: () => {
-            sendSupportLogsFromMenu();
+            openLogFolderFromMenu();
+          }
+        },
+        {
+          label: 'Save Logs…',
+          click: () => {
+            saveSupportLogsFromMenu();
           }
         },
         {

@@ -82,8 +82,9 @@ async function getAccessToken(storeDomain, clientId, clientSecret) {
 
   console.log('[Shopify] Requesting access token via Client Credentials Grant');
   console.log('[Shopify] POST', tokenUrl);
-  console.log('[Shopify] Content-Type: application/x-www-form-urlencoded');
-  console.log('[Shopify] Body:', body.replace(clientSecret, '***REDACTED***'));
+  // The request body and the response body are deliberately not logged: the body holds
+  // client_secret (URL-encoded, so a plain string replace would miss it) and a successful
+  // response holds the access_token itself.
 
   const response = await fetch(tokenUrl, {
     method: 'POST',
@@ -96,9 +97,9 @@ async function getAccessToken(storeDomain, clientId, clientSecret) {
 
   const responseText = await response.text();
   console.log('[Shopify] Response status:', response.status, response.statusText);
-  console.log('[Shopify] Response body:', responseText);
 
   if (!response.ok) {
+    console.error('[Shopify] Token request failed:', responseText.slice(0, 500));
     throw new Error(`Shopify OAuth error: ${response.status} ${response.statusText} - ${responseText}`);
   }
 

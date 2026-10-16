@@ -10885,6 +10885,16 @@ async function createServerMenuBar() {
     }},
     { label: 'Server Mode Info', action: () => {
       window.electron.openExternal('https://github.com/TechJeeper/Printventory?tab=readme-ov-file#server-mode');
+    }},
+    { label: 'Download Logs', action: () => {
+      // Redacted app + console logs from the server, saved by this browser.
+      const link = document.createElement('a');
+      link.href = '/api/support-logs.zip';
+      link.download = '';
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => link.remove(), 100);
     }}
   ]);
   
